@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections import defaultdict
-from pathlib import Path
 
-import numpy as np
 import torch
 from torch.utils.data import Dataset
 
@@ -16,45 +13,13 @@ def _role_annotate_turns(turns: list[str]) -> list[str]:
     return [("User: " if idx % 2 == 0 else "System: ") + turn for idx, turn in enumerate(turns) if turn]
 
 
-class _MultimodalFeatureMixin:
-    def _load_feature_store(self, path: Path) -> dict[int, np.ndarray]:
-        if not path.exists():
-            return {}
-        with path.open("r", encoding="utf-8") as f:
-            raw = json.load(f)
-        return {int(key): np.asarray(value, dtype=np.float32) for key, value in raw.items()}
-
-    def _attach_multimodal_features(self, example: dict) -> dict:
-        entity_ids = example["entity_ids"]
-        example["text_features"] = (
-            np.stack(
-                [self.text_feature_store.get(entity_id, np.zeros(768, dtype=np.float32)) for entity_id in entity_ids],
-                axis=0,
-            )
-            if entity_ids
-            else np.zeros((0, 768), dtype=np.float32)
-        )
-        example["visual_features"] = (
-            np.stack(
-                [self.visual_feature_store.get(entity_id, np.zeros(768, dtype=np.float32)) for entity_id in entity_ids],
-                axis=0,
-            )
-            if entity_ids
-            else np.zeros((0, 768), dtype=np.float32)
-        )
-        return example
-
-
-class _BaseDCMoMEDataset(Dataset, _MultimodalFeatureMixin):
+class _BaseDCMoMEDataset(Dataset):
     def __init__(self, config: DataConfig, split: str, phase: str) -> None:
         super().__init__()
         self.config = config
         self.split = split
         self.phase = phase
         self.dataset_dir = config.resolve_phase_data_dir(phase)
-        self.multimodal_dir = config.resolve_multimodal_root()
-        self.text_feature_store = self._load_feature_store(self.multimodal_dir / "id_embeddings_text.json")
-        self.visual_feature_store = self._load_feature_store(self.multimodal_dir / "id_embeddings_image.json")
         self.examples = self._load_examples()
 
     def _load_examples(self) -> list[dict]:
@@ -64,7 +29,7 @@ class _BaseDCMoMEDataset(Dataset, _MultimodalFeatureMixin):
         return len(self.examples)
 
     def __getitem__(self, index: int) -> dict:
-        return self._attach_multimodal_features(dict(self.examples[index]))
+        return dict(self.examples[index])
 
 
 class DCMoMEPretrainDataset(_BaseDCMoMEDataset):
@@ -230,26 +195,51 @@ class DCMoMEConvDataset(_BaseDCMoMEDataset):
         return examples[: self.config.n_examples]
 
 
-def _pad_entity_payload(examples: list[dict], pad_entity_id: int) -> tuple[list[list[int]], list[list[int]], np.ndarray, np.ndarray]:
+def _pad_entity_payload(examples: list[dict], pad_entity_id: int) -> tuple[list[list[int]], list[list[int]]]:
     max_entity_len = max((len(example["entity_ids"]) for example in examples), default=0)
     max_entity_len = max(max_entity_len, 1)
     entity_ids = []
     entity_mask = []
-    text_features = []
-    visual_features = []
     for example in examples:
         padded_ids = example["entity_ids"] + [pad_entity_id] * (max_entity_len - len(example["entity_ids"]))
         mask = [1] * len(example["entity_ids"]) + [0] * (max_entity_len - len(example["entity_ids"]))
         entity_ids.append(padded_ids)
         entity_mask.append(mask)
-        text_feature = np.zeros((max_entity_len, 768), dtype=np.float32)
-        visual_feature = np.zeros((max_entity_len, 768), dtype=np.float32)
-        if len(example["entity_ids"]) > 0:
-            text_feature[: len(example["entity_ids"])] = example["text_features"]
-            visual_feature[: len(example["entity_ids"])] = example["visual_features"]
-        text_features.append(text_feature)
-        visual_features.append(visual_feature)
-    return entity_ids, entity_mask, np.stack(text_features), np.stack(visual_features)
+    return entity_ids, entity_mask
+
+
+def _build_turn_history_payload(
+    examples: list[dict],
+    turn_tokenizer,
+    max_length: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    turn_histories = [example.get("turns", []) for example in examples]
+    max_turns = max((len(turns) for turns in turn_histories), default=1)
+    max_turns = max(max_turns, 1)
+
+    flat_turns: list[str] = []
+    turn_mask = torch.zeros((len(examples), max_turns), dtype=torch.long, device=device)
+    for batch_idx, turns in enumerate(turn_histories):
+        clipped_turns = [turn for turn in turns if turn]
+        if not clipped_turns:
+            clipped_turns = [""]
+        clipped_turns = clipped_turns[-max_turns:]
+        turn_mask[batch_idx, : len(clipped_turns)] = 1
+        padded_turns = clipped_turns + [""] * (max_turns - len(clipped_turns))
+        flat_turns.extend(padded_turns)
+
+    tokenized = turn_tokenizer(
+        flat_turns,
+        padding=True,
+        truncation=True,
+        max_length=max_length,
+        return_tensors="pt",
+    )
+    seq_len = tokenized.input_ids.size(-1)
+    input_ids = tokenized.input_ids.view(len(examples), max_turns, seq_len).to(device)
+    attention_mask = tokenized.attention_mask.view(len(examples), max_turns, seq_len).to(device)
+    return input_ids, attention_mask, turn_mask
 
 
 class DCMoMERecDataCollator:
@@ -277,7 +267,7 @@ class DCMoMERecDataCollator:
         current_turns = [example["turns"][-1] for example in examples]
         previous_turns = [" ".join(example["turns"][:-1]) if len(example["turns"]) > 1 else "" for example in examples]
         rec_labels = [example["rec_item"] for example in examples]
-        entity_ids, entity_mask, text_features, visual_features = _pad_entity_payload(examples, self.pad_entity_id)
+        entity_ids, entity_mask = _pad_entity_payload(examples, self.pad_entity_id)
 
         context_batch = self.tokenizer(
             contexts,
@@ -307,6 +297,12 @@ class DCMoMERecDataCollator:
             max_length=self.context_max_length,
             return_tensors="pt",
         ).to(self.device)
+        turn_history_input_ids, turn_history_attention_mask, turn_history_mask = _build_turn_history_payload(
+            examples,
+            turn_tokenizer=self.turn_tokenizer,
+            max_length=self.context_max_length,
+            device=self.device,
+        )
 
         return DCMoMEBatch(
             context_input_ids=context_batch.input_ids,
@@ -319,8 +315,9 @@ class DCMoMERecDataCollator:
             current_turn_attention_mask=current_turn_batch.attention_mask,
             previous_turn_input_ids=previous_turn_batch.input_ids,
             previous_turn_attention_mask=previous_turn_batch.attention_mask,
-            text_features=torch.as_tensor(text_features, device=self.device),
-            visual_features=torch.as_tensor(visual_features, device=self.device),
+            turn_history_input_ids=turn_history_input_ids,
+            turn_history_attention_mask=turn_history_attention_mask,
+            turn_history_mask=turn_history_mask,
             rec_labels=torch.as_tensor(rec_labels, device=self.device),
             labels=None,
         )
@@ -352,13 +349,15 @@ class DCMoMEConvDataCollator:
         self.response_max_length = response_max_length
 
     def __call__(self, examples: list[dict]) -> DCMoMEBatch:
+        # Keep teacher-forcing tensors right-padded (matches train_conv.py gen=False behavior).
+        self.tokenizer.padding_side = "right"
         contexts = [example["context_text"] for example in examples]
         prompts = [example["prompt_text"] for example in examples]
         current_turns = [example["turns"][-1] for example in examples]
         previous_turns = [" ".join(example["turns"][:-1]) if len(example["turns"]) > 1 else "" for example in examples]
         responses = [f"System: {example['response_text']}".strip() for example in examples]
         retrieved_prompts = [prompt for example in examples for prompt in example.get("retrieved_prompt_texts", [])]
-        entity_ids, entity_mask, text_features, visual_features = _pad_entity_payload(examples, self.pad_entity_id)
+        entity_ids, entity_mask = _pad_entity_payload(examples, self.pad_entity_id)
 
         context_batch = self.tokenizer(
             contexts,
@@ -388,6 +387,12 @@ class DCMoMEConvDataCollator:
             max_length=self.context_max_length,
             return_tensors="pt",
         ).to(self.device)
+        turn_history_input_ids, turn_history_attention_mask, turn_history_mask = _build_turn_history_payload(
+            examples,
+            turn_tokenizer=self.turn_tokenizer,
+            max_length=self.context_max_length,
+            device=self.device,
+        )
 
         teacher_inputs = self.tokenizer(
             [f"{context} {response}".strip() for context, response in zip(contexts, responses)],
@@ -396,6 +401,8 @@ class DCMoMEConvDataCollator:
             max_length=self.context_max_length + self.response_max_length,
             return_tensors="pt",
         ).to(self.device)
+        # Generation inputs should be left-padded (matches train_conv.py gen=True behavior).
+        self.tokenizer.padding_side = "left"
         generation_inputs = self.tokenizer(
             [f"{context} System:".strip() for context in contexts],
             padding=True,
@@ -403,6 +410,7 @@ class DCMoMEConvDataCollator:
             max_length=self.context_max_length,
             return_tensors="pt",
         ).to(self.device)
+        self.tokenizer.padding_side = "right"
         response_batch = self.tokenizer(
             responses,
             padding=True,
@@ -435,8 +443,9 @@ class DCMoMEConvDataCollator:
             current_turn_attention_mask=current_turn_batch.attention_mask,
             previous_turn_input_ids=previous_turn_batch.input_ids,
             previous_turn_attention_mask=previous_turn_batch.attention_mask,
-            text_features=torch.as_tensor(text_features, device=self.device),
-            visual_features=torch.as_tensor(visual_features, device=self.device),
+            turn_history_input_ids=turn_history_input_ids,
+            turn_history_attention_mask=turn_history_attention_mask,
+            turn_history_mask=turn_history_mask,
             conversation_input_ids=teacher_inputs.input_ids,
             conversation_attention_mask=teacher_inputs.attention_mask,
             conversation_labels=conversation_labels,

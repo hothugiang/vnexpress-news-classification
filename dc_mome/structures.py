@@ -36,6 +36,9 @@ class DCMoMEBatch:
     current_turn_attention_mask: torch.Tensor
     previous_turn_input_ids: torch.Tensor | None = None
     previous_turn_attention_mask: torch.Tensor | None = None
+    turn_history_input_ids: torch.Tensor | None = None
+    turn_history_attention_mask: torch.Tensor | None = None
+    turn_history_mask: torch.Tensor | None = None
     text_features: torch.Tensor | None = None
     visual_features: torch.Tensor | None = None
     labels: torch.Tensor | None = None

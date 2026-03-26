@@ -23,6 +23,19 @@ from .losses import (
 from .pipeline import DCMoMEModel
 from .prompt_gpt2 import PromptGPT2forCRS
 
+GPT2_SPECIAL_TOKENS_DICT = {
+    "pad_token": "<pad>",
+    "additional_special_tokens": ["<movie>"],
+}
+
+PROMPT_SPECIAL_TOKENS_REC = {
+    "additional_special_tokens": ["<movie>"],
+}
+
+PROMPT_SPECIAL_TOKENS_CONV = {
+    "additional_special_tokens": ["<movie>", "<mask>"],
+}
+
 
 @dataclass(frozen=True, slots=True)
 class PhaseSpec:
@@ -136,13 +149,19 @@ def build_dataloaders(
     pad_entity_id: int,
 ) -> dict[str, DataLoader]:
     tokenizer = AutoTokenizer.from_pretrained(config.training.lm_model_name_or_path)
-    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.add_special_tokens(GPT2_SPECIAL_TOKENS_DICT)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = GPT2_SPECIAL_TOKENS_DICT["pad_token"]
     prompt_tokenizer = AutoTokenizer.from_pretrained(
         config.training.text_model_name_or_path
     )
+    prompt_special_tokens = (
+        PROMPT_SPECIAL_TOKENS_CONV
+        if config.training.phase == "conversation"
+        else PROMPT_SPECIAL_TOKENS_REC
+    )
+    prompt_tokenizer.add_special_tokens(prompt_special_tokens)
     turn_tokenizer = prompt_tokenizer
-    if config.training.phase == "conversation":
-        tokenizer.padding_side = "left"
     collator = build_phase_collator(
         config.training.phase,
         tokenizer,
@@ -203,7 +222,7 @@ def compute_phase_loss(
     prompt_model: PromptGPT2forCRS | None = None,
     dc_mome_model: DCMoMEModel | None = None,
 ) -> torch.Tensor:
-    kg_mask, text_mask, visual_mask = modality_presence_masks(batch)
+    kg_mask, text_mask, visual_mask = modality_presence_masks(batch, dc_mome_model)
     align = multimodal_alignment_loss(
         outputs.h_kg,
         outputs.h_t,
@@ -245,16 +264,18 @@ def compute_phase_loss(
     raise ValueError(f"Unsupported phase task: {phase_spec.task}")
 
 
-def modality_presence_masks(batch) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def modality_presence_masks(
+    batch,
+    dc_mome_model: DCMoMEModel | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     kg_mask = batch.entity_mask.float()
-    if batch.text_features is None:
+    if dc_mome_model is None:
         text_mask = torch.zeros_like(kg_mask)
-    else:
-        text_mask = kg_mask * (batch.text_features.abs().sum(dim=-1) > 0).float()
-    if batch.visual_features is None:
         visual_mask = torch.zeros_like(kg_mask)
-    else:
-        visual_mask = kg_mask * (batch.visual_features.abs().sum(dim=-1) > 0).float()
+        return kg_mask, text_mask, visual_mask
+    text_presence, visual_presence = dc_mome_model.lookup_modality_presence(batch.entity_ids)
+    text_mask = kg_mask * text_presence.float()
+    visual_mask = kg_mask * visual_presence.float()
     return kg_mask, text_mask, visual_mask
 
 
@@ -537,15 +558,24 @@ def run_training(args: argparse.Namespace) -> None:
     )
 
     graph_bundle = load_mscrs_kg(config.data.resolve_graph_data_dir())
+    prompt_has_conversation = any(phase.name == "conversation" for phase in phase_order)
+    text_tokenizer = AutoTokenizer.from_pretrained(config.training.text_model_name_or_path)
+    text_tokenizer.add_special_tokens(
+        PROMPT_SPECIAL_TOKENS_CONV if prompt_has_conversation else PROMPT_SPECIAL_TOKENS_REC
+    )
     dialogue_backbone = AutoModel.from_pretrained(
         config.training.text_model_name_or_path
     )
+    dialogue_backbone.resize_token_embeddings(len(text_tokenizer))
     model = DCMoMEModel(config, graph_bundle, dialogue_backbone).to(device)
     lm_tokenizer = AutoTokenizer.from_pretrained(config.training.lm_model_name_or_path)
-    lm_tokenizer.pad_token = lm_tokenizer.eos_token
+    lm_tokenizer.add_special_tokens(GPT2_SPECIAL_TOKENS_DICT)
+    if lm_tokenizer.pad_token is None:
+        lm_tokenizer.pad_token = GPT2_SPECIAL_TOKENS_DICT["pad_token"]
     prompt_model = PromptGPT2forCRS.from_pretrained(
         config.training.lm_model_name_or_path
     ).to(device)
+    prompt_model.resize_token_embeddings(len(lm_tokenizer))
     prompt_model.config.pad_token_id = lm_tokenizer.pad_token_id
     if config.training.freeze_backbone:
         prompt_model.requires_grad_(False)

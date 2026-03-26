@@ -70,6 +70,7 @@ class MomentumDriftController(nn.Module):
         current_routing_weights: torch.Tensor,
         previous_dialogue_turn: torch.Tensor | None = None,
         previous_momentum: torch.Tensor | None = None,
+        history_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         if previous_dialogue_turn is None or previous_momentum is None:
             return current_routing_weights, current_routing_weights, None
@@ -79,4 +80,9 @@ class MomentumDriftController(nn.Module):
         lambda_b = torch.sigmoid(self.drift_gate(drift_input)).view(-1, 1, 1)
         routed = lambda_b * current_routing_weights + (1.0 - lambda_b) * previous_momentum
         momentum = self.beta * previous_momentum + (1.0 - self.beta) * current_routing_weights
+        if history_mask is not None:
+            expanded_mask = history_mask.view(-1, 1, 1)
+            routed = torch.where(expanded_mask, routed, current_routing_weights)
+            momentum = torch.where(expanded_mask, momentum, current_routing_weights)
+            topic_shift = torch.where(history_mask, topic_shift, torch.zeros_like(topic_shift))
         return routed, momentum, topic_shift

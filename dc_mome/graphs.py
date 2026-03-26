@@ -68,5 +68,7 @@ def load_mscrs_kg(dataset_dir: Path) -> SemanticGraphBundle:
         pad_entity_id=pad_entity_id,
         item_ids=item_ids,
         text_feature_matrix=_build_feature_matrix(num_entities, text_store, text_dim),
-        visual_feature_matrix=_build_feature_matrix(num_entities, visual_store, visual_dim),
+        visual_feature_matrix=_build_feature_matrix(
+            num_entities, visual_store, visual_dim
+        ),
     )

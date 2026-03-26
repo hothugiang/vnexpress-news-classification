@@ -88,11 +88,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-batch-size", type=int, default=8)
     parser.add_argument("--num-epochs", type=int, default=1)
     parser.add_argument("--output-dir", type=str, default="output/dc_mome")
-    parser.add_argument("--lm-model-name-or-path", type=str, default="models/DialoGPT-small")
-    parser.add_argument("--text-model-name-or-path", type=str, default="models/roberta_base")
+    parser.add_argument(
+        "--lm-model-name-or-path", type=str, default="models/DialoGPT-small"
+    )
+    parser.add_argument(
+        "--text-model-name-or-path", type=str, default="models/roberta_base"
+    )
     parser.add_argument("--save-every-phase", action="store_true")
     parser.add_argument("--log-interval", type=int, default=50)
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument(
+        "--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu"
+    )
     return parser.parse_args()
 
 
@@ -101,7 +107,9 @@ def build_config(args: argparse.Namespace) -> DCMoMEConfig:
     config.data.dataset = args.dataset
     rec_root = args.rec_data_root if args.dataset_root is None else args.dataset_root
     config.data.rec_data_root = config.data.rec_data_root.__class__(rec_root)
-    config.data.conv_data_root = config.data.conv_data_root.__class__(args.conv_data_root)
+    config.data.conv_data_root = config.data.conv_data_root.__class__(
+        args.conv_data_root
+    )
     config.training.phase = args.phase
     config.training.batch_size = args.batch_size
     config.training.eval_batch_size = args.eval_batch_size
@@ -129,7 +137,9 @@ def build_dataloaders(
 ) -> dict[str, DataLoader]:
     tokenizer = AutoTokenizer.from_pretrained(config.training.lm_model_name_or_path)
     tokenizer.pad_token = tokenizer.eos_token
-    prompt_tokenizer = AutoTokenizer.from_pretrained(config.training.text_model_name_or_path)
+    prompt_tokenizer = AutoTokenizer.from_pretrained(
+        config.training.text_model_name_or_path
+    )
     turn_tokenizer = prompt_tokenizer
     if config.training.phase == "conversation":
         tokenizer.padding_side = "left"
@@ -145,8 +155,14 @@ def build_dataloaders(
 
     dataloaders: dict[str, DataLoader] = {}
     for split in ("train", "valid", "test"):
-        dataset = build_phase_dataset(config.data, split=split, phase=config.training.phase)
-        batch_size = config.training.batch_size if split == "train" else config.training.eval_batch_size
+        dataset = build_phase_dataset(
+            config.data, split=split, phase=config.training.phase
+        )
+        batch_size = (
+            config.training.batch_size
+            if split == "train"
+            else config.training.eval_batch_size
+        )
         dataloaders[split] = DataLoader(
             dataset,
             batch_size=batch_size,
@@ -197,20 +213,35 @@ def compute_phase_loss(
         visual_mask=visual_mask,
         temperature=config.encoder.temperature,
     )
-    balance = config.training.balance_loss_weight * load_balancing_loss(outputs.routing_weights)
+    balance = config.training.balance_loss_weight * load_balancing_loss(
+        outputs.routing_weights
+    )
     if phase_spec.task == "alignment":
         return config.training.align_loss_weight * align
     if phase_spec.task == "pretrain":
-        rec_logits, candidate_ids = recommendation_prompt_learning(prompt_model, dc_mome_model, outputs, batch)
+        rec_logits, candidate_ids = recommendation_prompt_learning(
+            prompt_model, dc_mome_model, outputs, batch
+        )
         rec_loss = recommendation_ce_loss(rec_logits, batch.rec_labels)
         return balance + rec_loss + config.training.align_loss_weight * align
     if phase_spec.task == "recommendation":
-        rec_logits, candidate_ids = recommendation_prompt_learning(prompt_model, dc_mome_model, outputs, batch)
+        rec_logits, candidate_ids = recommendation_prompt_learning(
+            prompt_model, dc_mome_model, outputs, batch
+        )
         rec_loss = recommendation_ce_loss(rec_logits, batch.rec_labels)
         return balance + rec_loss + config.training.align_loss_weight * align
     if phase_spec.task == "conversation":
-        lm_loss = conversation_lm_loss(prompt_model, outputs.prompt_token_embeds, batch, dc_mome_model=dc_mome_model)
-        return balance + generation_loss(lm_loss) + config.training.align_loss_weight * align
+        lm_loss = conversation_lm_loss(
+            prompt_model,
+            outputs.prompt_token_embeds,
+            batch,
+            dc_mome_model=dc_mome_model,
+        )
+        return (
+            balance
+            + generation_loss(lm_loss)
+            + config.training.align_loss_weight * align
+        )
     raise ValueError(f"Unsupported phase task: {phase_spec.task}")
 
 
@@ -233,7 +264,12 @@ def conversation_lm_loss(
     batch,
     dc_mome_model: DCMoMEModel | None = None,
 ) -> torch.Tensor | None:
-    if prompt_model is None or dc_mome_model is None or batch.conversation_input_ids is None or batch.conversation_labels is None:
+    if (
+        prompt_model is None
+        or dc_mome_model is None
+        or batch.conversation_input_ids is None
+        or batch.conversation_labels is None
+    ):
         return None
     inputs_embeds, attention_mask, _ = build_mapped_conversation_inputs(
         prompt_model,
@@ -294,12 +330,18 @@ def generate_responses(
         attention_mask = torch.cat(
             [
                 attention_mask,
-                torch.ones((attention_mask.size(0), 1), dtype=attention_mask.dtype, device=attention_mask.device),
+                torch.ones(
+                    (attention_mask.size(0), 1),
+                    dtype=attention_mask.dtype,
+                    device=attention_mask.device,
+                ),
             ],
             dim=1,
         )
     if not generated_tokens:
-        return torch.empty((attention_mask.size(0), 0), dtype=torch.long, device=attention_mask.device)
+        return torch.empty(
+            (attention_mask.size(0), 0), dtype=torch.long, device=attention_mask.device
+        )
     return torch.cat(generated_tokens, dim=1)
 
 
@@ -346,7 +388,9 @@ def evaluate_phase_outputs(
     config: DCMoMEConfig,
 ) -> None:
     if phase_spec.task in {"pretrain", "recommendation"}:
-        rec_logits, candidate_ids = recommendation_prompt_learning(prompt_model, dc_mome_model, outputs, batch)
+        rec_logits, candidate_ids = recommendation_prompt_learning(
+            prompt_model, dc_mome_model, outputs, batch
+        )
         if rec_logits is None or candidate_ids.numel() == 0:
             return
         if phase_spec.task == "recommendation":
@@ -358,7 +402,13 @@ def evaluate_phase_outputs(
         ranked_item_ids = candidate_ids[ranked_idx]
         metrics["rec"].update(ranked_item_ids, batch.rec_labels)
     elif phase_spec.task == "conversation" and prompt_model is not None:
-        preds = generate_responses(prompt_model, outputs.prompt_token_embeds, batch, config.data.generation_max_length, dc_mome_model=dc_mome_model)
+        preds = generate_responses(
+            prompt_model,
+            outputs.prompt_token_embeds,
+            batch,
+            config.data.generation_max_length,
+            dc_mome_model=dc_mome_model,
+        )
         metrics["conv"].update(preds, batch.response_input_ids)
 
 
@@ -381,31 +431,35 @@ def run_epoch(
         prompt_model.train(is_train and not config.training.freeze_backbone)
     total_loss = 0.0
     total_steps = 0
-    previous_momentum = None
     metrics = {
         "rec": RecEvaluator(),
         "conv": ConvEvaluator(tokenizer),
     }
 
     for step_idx, batch in enumerate(dataloader):
-        # Current batching mixes unrelated dialogues and variable entity lengths,
-        # so routing momentum cannot be propagated safely across batches.
-        previous_momentum = None
         with torch.set_grad_enabled(is_train):
             outputs = model(
                 batch,
-                previous_momentum=previous_momentum,
+                previous_momentum=None,
                 use_rec_prefix=phase_spec.use_rec_prefix,
                 use_conv_prefix=phase_spec.use_conv_prefix,
                 prompt_output_entity=phase_spec.prompt_output_entity,
             )
-            previous_momentum = outputs.routing_momentum.detach()
-            loss = compute_phase_loss(outputs, batch, config, phase_spec, prompt_model=prompt_model, dc_mome_model=model)
+            loss = compute_phase_loss(
+                outputs,
+                batch,
+                config,
+                phase_spec,
+                prompt_model=prompt_model,
+                dc_mome_model=model,
+            )
             if is_train:
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-        evaluate_phase_outputs(outputs, batch, phase_spec, prompt_model, model, tokenizer, metrics, config)
+        evaluate_phase_outputs(
+            outputs, batch, phase_spec, prompt_model, model, tokenizer, metrics, config
+        )
 
         total_loss += float(loss.detach())
         total_steps += 1
@@ -439,17 +493,23 @@ def save_metrics(output_dir: Path, metrics: dict) -> None:
         json.dump(metrics, f, indent=2)
 
 
-def save_phase_checkpoint(output_dir: Path, dc_mome_model: DCMoMEModel, prompt_model: PromptGPT2forCRS) -> None:
+def save_phase_checkpoint(
+    output_dir: Path, dc_mome_model: DCMoMEModel, prompt_model: PromptGPT2forCRS
+) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     dc_mome_model.save(output_dir / "dc_mome")
     torch.save(prompt_model.state_dict(), output_dir / "prompt_lm.pt")
 
 
-def load_phase_checkpoint(output_dir: Path, dc_mome_model: DCMoMEModel, prompt_model: PromptGPT2forCRS) -> None:
+def load_phase_checkpoint(
+    output_dir: Path, dc_mome_model: DCMoMEModel, prompt_model: PromptGPT2forCRS
+) -> None:
     dc_mome_model.load(output_dir / "dc_mome")
     prompt_path = output_dir / "prompt_lm.pt"
     if prompt_path.exists():
-        prompt_model.load_state_dict(torch.load(prompt_path, map_location="cpu"), strict=False)
+        prompt_model.load_state_dict(
+            torch.load(prompt_path, map_location="cpu"), strict=False
+        )
 
 
 def maybe_load_pretrained_prompt(model: DCMoMEModel, phase_output_dir: Path) -> None:
@@ -477,11 +537,15 @@ def run_training(args: argparse.Namespace) -> None:
     )
 
     graph_bundle = load_mscrs_kg(config.data.resolve_graph_data_dir())
-    dialogue_backbone = AutoModel.from_pretrained(config.training.text_model_name_or_path)
+    dialogue_backbone = AutoModel.from_pretrained(
+        config.training.text_model_name_or_path
+    )
     model = DCMoMEModel(config, graph_bundle, dialogue_backbone).to(device)
     lm_tokenizer = AutoTokenizer.from_pretrained(config.training.lm_model_name_or_path)
     lm_tokenizer.pad_token = lm_tokenizer.eos_token
-    prompt_model = PromptGPT2forCRS.from_pretrained(config.training.lm_model_name_or_path).to(device)
+    prompt_model = PromptGPT2forCRS.from_pretrained(
+        config.training.lm_model_name_or_path
+    ).to(device)
     prompt_model.config.pad_token_id = lm_tokenizer.pad_token_id
     if config.training.freeze_backbone:
         prompt_model.requires_grad_(False)
@@ -494,18 +558,34 @@ def run_training(args: argparse.Namespace) -> None:
         logger.log(
             "phase_start",
             phase=phase_spec.name,
+            learning_rate=config.training.learning_rate,
+            weight_decay=config.training.weight_decay,
+            num_warmup_steps=config.training.num_warmup_steps,
+            batch_size=config.training.batch_size,
+            eval_batch_size=config.training.eval_batch_size,
+            num_epochs=config.training.num_epochs,
             num_train_examples=len(dataloaders["train"].dataset),
             num_valid_examples=len(dataloaders["valid"].dataset),
             num_test_examples=len(dataloaders["test"].dataset),
         )
         if phase_spec.requires_pretrained_prompt:
             maybe_load_pretrained_prompt(model, config.training.output_dir)
-            logger.log("checkpoint_load", phase=phase_spec.name, source=str(config.training.output_dir / "pretrain" / "best"))
+            logger.log(
+                "checkpoint_load",
+                phase=phase_spec.name,
+                source=str(config.training.output_dir / "pretrain" / "best"),
+            )
 
         trainable_parameters = list(model.parameters())
         if not config.training.freeze_backbone:
-            trainable_parameters += [p for p in prompt_model.parameters() if p.requires_grad]
-        optimizer = torch.optim.AdamW(trainable_parameters, lr=config.training.learning_rate, weight_decay=config.training.weight_decay)
+            trainable_parameters += [
+                p for p in prompt_model.parameters() if p.requires_grad
+            ]
+        optimizer = torch.optim.AdamW(
+            trainable_parameters,
+            lr=config.training.learning_rate,
+            weight_decay=config.training.weight_decay,
+        )
         best_valid = float("inf")
         best_epoch = -1
         best_valid_metrics: dict[str, float] = {}
@@ -513,12 +593,30 @@ def run_training(args: argparse.Namespace) -> None:
 
         for epoch_idx in range(config.training.num_epochs):
             train_loss, train_metrics = run_epoch(
-                model, dataloaders["train"], optimizer, config, phase_spec, prompt_model, lm_tokenizer,
-                logger=logger, epoch_idx=epoch_idx, split="train", log_interval=args.log_interval,
+                model,
+                dataloaders["train"],
+                optimizer,
+                config,
+                phase_spec,
+                prompt_model,
+                lm_tokenizer,
+                logger=logger,
+                epoch_idx=epoch_idx,
+                split="train",
+                log_interval=args.log_interval,
             )
             valid_loss, valid_metrics = run_epoch(
-                model, dataloaders["valid"], None, config, phase_spec, prompt_model, lm_tokenizer,
-                logger=logger, epoch_idx=epoch_idx, split="valid", log_interval=args.log_interval,
+                model,
+                dataloaders["valid"],
+                None,
+                config,
+                phase_spec,
+                prompt_model,
+                lm_tokenizer,
+                logger=logger,
+                epoch_idx=epoch_idx,
+                split="valid",
+                log_interval=args.log_interval,
             )
             history.append(
                 {
@@ -544,7 +642,9 @@ def run_training(args: argparse.Namespace) -> None:
                 )
 
             if args.save_every_phase:
-                save_phase_checkpoint(phase_dir / f"epoch_{epoch_idx:02d}", model, prompt_model)
+                save_phase_checkpoint(
+                    phase_dir / f"epoch_{epoch_idx:02d}", model, prompt_model
+                )
                 logger.log(
                     "checkpoint_save",
                     phase=phase_spec.name,
@@ -566,8 +666,17 @@ def run_training(args: argparse.Namespace) -> None:
         logger.log("checkpoint_save", phase=phase_spec.name, checkpoint="final")
         load_phase_checkpoint(phase_dir / "best", model, prompt_model)
         test_loss, test_metrics = run_epoch(
-            model, dataloaders["test"], None, config, phase_spec, prompt_model, lm_tokenizer,
-            logger=logger, epoch_idx=best_epoch, split="test", log_interval=args.log_interval,
+            model,
+            dataloaders["test"],
+            None,
+            config,
+            phase_spec,
+            prompt_model,
+            lm_tokenizer,
+            logger=logger,
+            epoch_idx=best_epoch,
+            split="test",
+            log_interval=args.log_interval,
         )
         metrics = {
             "phase": phase_spec.name,

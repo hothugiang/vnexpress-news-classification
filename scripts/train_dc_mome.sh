@@ -17,6 +17,11 @@ PHASES="${PHASES:-alignment pretrain recommendation conversation}"
 LM_MODEL="${LM_MODEL:-models/DialoGPT-small}"
 TEXT_MODEL="${TEXT_MODEL:-models/roberta_base}"
 OUTPUT_DIR="${OUTPUT_DIR:-output/dc_mome}"
+USE_WANDB="${USE_WANDB:-0}"
+WANDB_PROJECT="${WANDB_PROJECT:-dc-mome}"
+WANDB_ENTITY="${WANDB_ENTITY:-}"
+WANDB_NAME="${WANDB_NAME:-}"
+WANDB_MODE="${WANDB_MODE:-online}"
 
 echo "DC-MoME training"
 echo "  dataset      : $DATASET"
@@ -30,16 +35,35 @@ echo "  phases       : $PHASES"
 echo "  lm_model     : $LM_MODEL"
 echo "  text_model   : $TEXT_MODEL"
 echo "  output_dir   : $OUTPUT_DIR"
+echo "  use_wandb    : $USE_WANDB"
+echo "  wandb_project: $WANDB_PROJECT"
+echo "  wandb_entity : ${WANDB_ENTITY:-<unset>}"
+echo "  wandb_name   : ${WANDB_NAME:-<unset>}"
+echo "  wandb_mode   : $WANDB_MODE"
 
-"$PYTHON_BIN" -m dc_mome.train \
-  --dataset "$DATASET" \
-  --rec-data-root "$REC_DATA_ROOT" \
-  --conv-data-root "$CONV_DATA_ROOT" \
-  --phases "$PHASES" \
-  --batch-size "$BATCH_SIZE" \
-  --eval-batch-size "$EVAL_BATCH_SIZE" \
-  --num-epochs "$NUM_EPOCHS" \
-  --lm-model-name-or-path "$LM_MODEL" \
-  --text-model-name-or-path "$TEXT_MODEL" \
-  --output-dir "$OUTPUT_DIR" \
+TRAIN_ARGS=(
+  -m dc_mome.train
+  --dataset "$DATASET"
+  --rec-data-root "$REC_DATA_ROOT"
+  --conv-data-root "$CONV_DATA_ROOT"
+  --phases "$PHASES"
+  --batch-size "$BATCH_SIZE"
+  --eval-batch-size "$EVAL_BATCH_SIZE"
+  --num-epochs "$NUM_EPOCHS"
+  --lm-model-name-or-path "$LM_MODEL"
+  --text-model-name-or-path "$TEXT_MODEL"
+  --output-dir "$OUTPUT_DIR"
   --device "$DEVICE"
+)
+
+if [[ "$USE_WANDB" == "1" || "$USE_WANDB" == "true" || "$USE_WANDB" == "TRUE" ]]; then
+  TRAIN_ARGS+=(--use-wandb --wandb-project "$WANDB_PROJECT" --wandb-mode "$WANDB_MODE")
+  if [[ -n "$WANDB_ENTITY" ]]; then
+    TRAIN_ARGS+=(--wandb-entity "$WANDB_ENTITY")
+  fi
+  if [[ -n "$WANDB_NAME" ]]; then
+    TRAIN_ARGS+=(--wandb-name "$WANDB_NAME")
+  fi
+fi
+
+"$PYTHON_BIN" "${TRAIN_ARGS[@]}"

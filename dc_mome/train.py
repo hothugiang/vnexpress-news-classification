@@ -93,6 +93,13 @@ PHASE_SPECS: dict[str, PhaseSpec] = {
     ),
 }
 
+PHASE_DEFAULT_EPOCHS: dict[str, int] = {
+    "alignment": 5,
+    "pretrain": 5,
+    "recommendation": 20,
+    "conversation": 10,
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -104,7 +111,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--phases", type=str, default=None)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--eval-batch-size", type=int, default=8)
-    parser.add_argument("--num-epochs", type=int, default=1)
+    parser.add_argument("--num-epochs", type=int, default=None)
+    parser.add_argument("--alignment-epochs", type=int, default=None)
+    parser.add_argument("--pretrain-epochs", type=int, default=None)
+    parser.add_argument("--recommendation-epochs", type=int, default=None)
+    parser.add_argument("--conversation-epochs", type=int, default=None)
     parser.add_argument("--output-dir", type=str, default="output/dc_mome")
     parser.add_argument(
         "--lm-model-name-or-path", type=str, default="models/DialoGPT-small"
@@ -140,11 +151,26 @@ def build_config(args: argparse.Namespace) -> DCMoMEConfig:
     config.training.phase = args.phase
     config.training.batch_size = args.batch_size
     config.training.eval_batch_size = args.eval_batch_size
-    config.training.num_epochs = args.num_epochs
+    if args.num_epochs is not None:
+        config.training.num_epochs = args.num_epochs
     config.training.output_dir = Path(args.output_dir)
     config.training.lm_model_name_or_path = args.lm_model_name_or_path
     config.training.text_model_name_or_path = args.text_model_name_or_path
     return config
+
+
+def resolve_phase_num_epochs(args: argparse.Namespace, phase_name: str) -> int:
+    if args.num_epochs is not None:
+        return args.num_epochs
+    override = {
+        "alignment": args.alignment_epochs,
+        "pretrain": args.pretrain_epochs,
+        "recommendation": args.recommendation_epochs,
+        "conversation": args.conversation_epochs,
+    }[phase_name]
+    if override is not None:
+        return override
+    return PHASE_DEFAULT_EPOCHS[phase_name]
 
 
 def resolve_phase_order(args: argparse.Namespace) -> list[PhaseSpec]:
@@ -615,7 +641,7 @@ def run_training(args: argparse.Namespace) -> None:
         phases=[phase.name for phase in phase_order],
         batch_size=config.training.batch_size,
         eval_batch_size=config.training.eval_batch_size,
-        num_epochs=config.training.num_epochs,
+        default_num_epochs=config.training.num_epochs,
         device=str(device),
     )
 
@@ -647,6 +673,7 @@ def run_training(args: argparse.Namespace) -> None:
     for phase_spec in phase_order:
         phase_dir = config.training.output_dir / phase_spec.name
         config.training.phase = phase_spec.name
+        config.training.num_epochs = resolve_phase_num_epochs(args, phase_spec.name)
         dataloaders = build_dataloaders(config, device, graph_bundle.pad_entity_id)
         logger.log(
             "phase_start",

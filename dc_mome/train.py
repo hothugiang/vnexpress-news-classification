@@ -10,6 +10,11 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import AutoModel, AutoTokenizer
 
+try:
+    import wandb
+except ImportError:  # pragma: no cover - optional dependency
+    wandb = None
+
 from .config import DCMoMEConfig
 from .dataset import build_phase_collator, build_phase_dataset
 from .evaluators import ConvEvaluator, RecEvaluator
@@ -109,10 +114,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--save-every-phase", action="store_true")
     parser.add_argument("--log-interval", type=int, default=50)
+    parser.add_argument("--use-wandb", action="store_true")
+    parser.add_argument("--wandb-project", type=str, default="dc-mome")
+    parser.add_argument("--wandb-entity", type=str, default=None)
+    parser.add_argument("--wandb-name", type=str, default=None)
+    parser.add_argument("--wandb-mode", type=str, default="online")
     parser.add_argument(
         "--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu"
     )
     return parser.parse_args()
+
+
+def _flatten_metrics(prefix: str, metrics: dict[str, float]) -> dict[str, float]:
+    return {f"{prefix}/{k}": float(v) for k, v in metrics.items()}
 
 
 def build_config(args: argparse.Namespace) -> DCMoMEConfig:
@@ -545,6 +559,30 @@ def run_training(args: argparse.Namespace) -> None:
     phase_order = resolve_phase_order(args)
     config.training.output_dir.mkdir(parents=True, exist_ok=True)
     logger = TrainLogger(config.training.output_dir)
+    wandb_run = None
+    if args.use_wandb:
+        if wandb is None:
+            raise ImportError("wandb is not installed. Please install with `pip install wandb`.")
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            name=args.wandb_name,
+            mode=args.wandb_mode,
+            config={
+                "dataset": config.data.dataset,
+                "rec_data_root": str(config.data.rec_data_root),
+                "conv_data_root": str(config.data.conv_data_root),
+                "phase_arg": args.phase,
+                "phases_arg": args.phases,
+                "batch_size": config.training.batch_size,
+                "eval_batch_size": config.training.eval_batch_size,
+                "num_epochs": config.training.num_epochs,
+                "learning_rate": config.training.learning_rate,
+                "weight_decay": config.training.weight_decay,
+                "lm_model_name_or_path": config.training.lm_model_name_or_path,
+                "text_model_name_or_path": config.training.text_model_name_or_path,
+            },
+        )
     logger.log(
         "run_start",
         dataset=config.data.dataset,
@@ -691,6 +729,16 @@ def run_training(args: argparse.Namespace) -> None:
                 train_metrics=train_metrics,
                 valid_metrics=valid_metrics,
             )
+            if wandb_run is not None:
+                payload = {
+                    "phase": phase_spec.name,
+                    "epoch": epoch_idx,
+                    "train/loss": float(train_loss),
+                    "valid/loss": float(valid_loss),
+                }
+                payload.update(_flatten_metrics("train", train_metrics))
+                payload.update(_flatten_metrics("valid", valid_metrics))
+                wandb_run.log(payload)
 
         save_phase_checkpoint(phase_dir / "final", model, prompt_model)
         logger.log("checkpoint_save", phase=phase_spec.name, checkpoint="final")
@@ -729,7 +777,18 @@ def run_training(args: argparse.Namespace) -> None:
             test_loss=round(test_loss, 6),
             test_metrics=test_metrics,
         )
+        if wandb_run is not None:
+            payload = {
+                "phase": phase_spec.name,
+                "summary/best_epoch": int(best_epoch),
+                "summary/best_valid_loss": float(best_valid),
+                "summary/test_loss": float(test_loss),
+            }
+            payload.update(_flatten_metrics("test", test_metrics))
+            wandb_run.log(payload)
     logger.log("run_end", output_dir=str(config.training.output_dir))
+    if wandb_run is not None:
+        wandb_run.finish()
 
 
 def main() -> None:

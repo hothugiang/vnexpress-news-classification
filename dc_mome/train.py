@@ -459,6 +459,9 @@ def run_epoch(
     epoch_idx: int | None = None,
     split: str = "train",
     log_interval: int = 50,
+    wandb_run=None,
+    phase_name: str | None = None,
+    global_step_state: dict[str, int] | None = None,
 ) -> tuple[float, dict[str, float]]:
     is_train = optimizer is not None
     model.train(is_train)
@@ -498,6 +501,11 @@ def run_epoch(
 
         total_loss += float(loss.detach())
         total_steps += 1
+        if is_train and global_step_state is not None:
+            global_step_state["value"] = global_step_state.get("value", 0) + 1
+            global_step = global_step_state["value"]
+        else:
+            global_step = None
         if logger is not None and (step_idx == 0 or (step_idx + 1) % log_interval == 0):
             logger.log(
                 "step",
@@ -511,6 +519,19 @@ def run_epoch(
                 h_t_norm=round(float(outputs.h_t.norm(dim=-1).mean().detach()), 6),
                 h_v_norm=round(float(outputs.h_v.norm(dim=-1).mean().detach()), 6),
             )
+            if wandb_run is not None and global_step is not None:
+                wandb_run.log(
+                    {
+                        "phase": phase_name or phase_spec.name,
+                        "split": split,
+                        "epoch": epoch_idx,
+                        "global_step": int(global_step),
+                        f"{split}/step_loss": float(loss.detach()),
+                        f"{split}/h_kg_norm": float(outputs.h_kg.norm(dim=-1).mean().detach()),
+                        f"{split}/h_t_norm": float(outputs.h_t.norm(dim=-1).mean().detach()),
+                        f"{split}/h_v_norm": float(outputs.h_v.norm(dim=-1).mean().detach()),
+                    }
+                )
 
     if total_steps == 0:
         return 0.0, {}
@@ -583,6 +604,9 @@ def run_training(args: argparse.Namespace) -> None:
                 "text_model_name_or_path": config.training.text_model_name_or_path,
             },
         )
+        wandb_run.define_metric("global_step")
+        wandb_run.define_metric("train/*", step_metric="global_step")
+        wandb_run.define_metric("valid/*", step_metric="global_step")
     logger.log(
         "run_start",
         dataset=config.data.dataset,
@@ -619,6 +643,7 @@ def run_training(args: argparse.Namespace) -> None:
         prompt_model.requires_grad_(False)
         model.prompt_text_backbone.requires_grad_(False)
 
+    global_step_state = {"value": 0}
     for phase_spec in phase_order:
         phase_dir = config.training.output_dir / phase_spec.name
         config.training.phase = phase_spec.name
@@ -672,6 +697,9 @@ def run_training(args: argparse.Namespace) -> None:
                 epoch_idx=epoch_idx,
                 split="train",
                 log_interval=args.log_interval,
+                wandb_run=wandb_run,
+                phase_name=phase_spec.name,
+                global_step_state=global_step_state,
             )
             valid_loss, valid_metrics = run_epoch(
                 model,
@@ -685,6 +713,9 @@ def run_training(args: argparse.Namespace) -> None:
                 epoch_idx=epoch_idx,
                 split="valid",
                 log_interval=args.log_interval,
+                wandb_run=wandb_run,
+                phase_name=phase_spec.name,
+                global_step_state=global_step_state,
             )
             history.append(
                 {
@@ -733,6 +764,7 @@ def run_training(args: argparse.Namespace) -> None:
                 payload = {
                     "phase": phase_spec.name,
                     "epoch": epoch_idx,
+                    "global_step": int(global_step_state["value"]),
                     "train/loss": float(train_loss),
                     "valid/loss": float(valid_loss),
                 }

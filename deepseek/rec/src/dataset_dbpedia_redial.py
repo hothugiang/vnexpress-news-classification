@@ -1,0 +1,174 @@
+import json
+import os
+import tqdm
+import torch
+from loguru import logger
+from collections import defaultdict
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+from tqdm.auto import tqdm
+from scipy.sparse import coo_matrix
+from collections import Counter
+from sklearn.neighbors import NearestNeighbors
+import pickle
+
+
+class DBpedia:
+    def __init__(self, dataset, debug=False):
+        self.debug = debug
+        self.dataset_dir = os.path.join("/home/weiyibiao/MSCRS-main/data", dataset)
+        with open(
+            os.path.join(self.dataset_dir, "dbpedia_subkg.json"), "r", encoding="utf-8"
+        ) as f:
+            self.entity_kg = json.load(f)
+        with open(
+            os.path.join(self.dataset_dir, "entity2id.json"), "r", encoding="utf-8"
+        ) as f:
+            self.entity2id = json.load(f)
+        with open(
+            os.path.join(self.dataset_dir, "relation2id.json"), "r", encoding="utf-8"
+        ) as f:
+            self.relation2id = json.load(f)
+        with open(
+            os.path.join(self.dataset_dir, "item_ids.json"), "r", encoding="utf-8"
+        ) as f:
+            self.item_ids = json.load(f)
+
+        self._process_entity_kg()
+
+    def _process_entity_kg(self, SELF_LOOP_ID=185):
+
+        topic2id = self.entity2id
+        id2entity = {idx: entity for entity, idx in topic2id.items()}
+        n_entity = len(topic2id)
+        edge_list = []
+        entity2neighbor = defaultdict(list)
+
+        for entity in range(n_entity + 1):
+            edge_list.append((entity, entity, SELF_LOOP_ID))
+            if str(entity) not in self.entity_kg:
+                continue
+            for tail_and_relation in self.entity_kg[str(entity)]:
+                if (
+                    entity != tail_and_relation[1]
+                    and tail_and_relation[0] != SELF_LOOP_ID
+                ):
+                    edge_list.append(
+                        (entity, tail_and_relation[1], tail_and_relation[0])
+                    )
+                    edge_list.append(
+                        (tail_and_relation[1], entity, tail_and_relation[0])
+                    )
+
+        relation_cnt = defaultdict(int)
+        relation_idx = {}
+        for h, t, r in edge_list:
+            relation_cnt[r] += 1
+        for h, t, r in edge_list:
+            if relation_cnt[r] > 1000 and r not in relation_idx:
+                relation_idx[r] = len(relation_idx) + 1
+        edge_list = [
+            (h, t, relation_idx[r]) for h, t, r in edge_list if relation_cnt[r] > 1000
+        ]
+
+        edge = torch.as_tensor(edge_list, dtype=torch.long)
+        self.edge_index = edge[:, :2].t()
+        self.edge_type = edge[:, 2]
+        self.num_relations = len(relation_idx)
+        self.pad_entity_id = max(self.entity2id.values()) + 1
+        self.num_entities = max(self.entity2id.values()) + 2
+        if self.debug:
+            logger.debug(
+                f"#edge: {len(edge)}, #relation: {self.num_relations}, "
+                f"#entity: {self.num_entities}, #item: {len(self.item_ids)}"
+            )
+
+    def get_entity_kg_info(self):
+        kg_info = {
+            "edge_index": self.edge_index,
+            "edge_type": self.edge_type,
+            "num_entities": self.num_entities,
+            "num_relations": self.num_relations,
+            "pad_entity_id": self.pad_entity_id,
+            "item_ids": self.item_ids,
+        }
+        return kg_info
+
+
+class Co_occurrence:
+    def __init__(
+        self, dataset, split, entity_max_length, all_items, n_entity, debug=False
+    ):
+        self.debug = debug
+        self.entity_max_length = entity_max_length
+        self.all_items = set(all_items)
+        input_file = "/home/weiyibiao/MSCRS-main/data/redial/edge_index_c.pt"
+        self.edge_index_c = torch.load(input_file)
+
+    def get_entity_co_info(self):
+        co_info = {
+            "edge_index_c": self.edge_index_c,
+        }
+        return co_info
+
+
+class text_sim:
+    def __init__(self, pad_entity_id):
+        dataset_dir = "/home/weiyibiao/MSCRS-main/data/redial"
+        data_file = os.path.join(dataset_dir, "id_embeddings_text.json")
+        self.co = []
+        self.pad_entity_id = pad_entity_id
+        self.prepare_data(data_file)
+
+    def prepare_data(self, data_file):
+        with open(data_file, "r", encoding="utf-8") as f:
+            id_embeddings = json.load(f)
+            new_key = self.pad_entity_id
+            new_value = [1.0] * 768
+            id_embeddings[str(new_key)] = new_value
+            self.keys = list(id_embeddings.keys())
+            self.keys = [int(key) for key in self.keys]
+            self.id_to_idx = {node_id: idx for idx, node_id in enumerate(self.keys)}
+            self.idx_to_id = {idx: node_id for node_id, idx in self.id_to_idx.items()}
+            embeddings = np.array([id_embeddings[str(k)] for k in self.keys])
+            self.entity_embeds = torch.tensor(embeddings, dtype=torch.float)
+
+    def get_entity_ts_info(self):
+        ts_info = {
+            "embeddings": self.embeddings,
+            "id_to_idx": self.id_to_idx,
+            "idx_to_id": self.idx_to_id,
+            "all_movie": self.keys,
+        }
+        return ts_info
+
+
+class image_sim:
+    def __init__(self, pad_entity_id):
+        dataset_dir = "/home/weiyibiao/MSCRS-main/data/redial"
+        data_file = os.path.join(dataset_dir, "id_embeddings_image.json")
+        self.co = []
+        self.pad_entity_id = pad_entity_id
+        self.prepare_data(data_file)
+
+    def prepare_data(self, data_file):
+        with open(data_file, "r", encoding="utf-8") as f:
+            id_embeddings = json.load(f)
+            new_key = self.pad_entity_id
+            new_value = [1.0] * 768
+            id_embeddings[str(new_key)] = new_value
+            self.keys = list(id_embeddings.keys())
+            self.keys = [int(key) for key in self.keys]
+            self.id_to_idx = {node_id: idx for idx, node_id in enumerate(self.keys)}
+            self.idx_to_id = {idx: node_id for node_id, idx in self.id_to_idx.items()}
+            embeddings = np.array([id_embeddings[str(k)] for k in self.keys])
+            self.entity_embeds = torch.tensor(embeddings, dtype=torch.float)
+
+    def get_entity_is_info(self):
+        is_info = {
+            "embeddings": self.embeddings,
+            "id_to_idx": self.id_to_idx,
+            "idx_to_id": self.idx_to_id,
+            "all_movie": self.keys,
+        }
+        return is_info

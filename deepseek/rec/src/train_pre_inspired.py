@@ -211,14 +211,14 @@ if __name__ == "__main__":
         prompt_max_length=args.prompt_max_length,
         entity_max_length=args.entity_max_length,
     )
-    co = Co_occurrence(
-        dataset=args.dataset,
-        split="train",
-        debug=args.debug,
-        all_items=kg["item_ids"],
-        entity_max_length=args.entity_max_length,
-        n_entity=kg["num_entities"],
-    ).get_entity_co_info()
+    # co = Co_occurrence(
+    #     dataset=args.dataset,
+    #     split="train",
+    #     debug=args.debug,
+    #     all_items=kg["item_ids"],
+    #     entity_max_length=args.entity_max_length,
+    #     n_entity=kg["num_entities"],
+    # ).get_entity_co_info()
     text_simi = text_sim(
         dataset_dir=args.dataset_dir,
         dataset=args.dataset,

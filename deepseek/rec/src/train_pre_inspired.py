@@ -425,7 +425,7 @@ if __name__ == "__main__":
         for batch in tqdm(valid_dataloader):
             with torch.no_grad():
                 token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-                prompt_embeds, loss_cl = prompt_encoder(
+                prompt_embeds, loss_cl, loss_lb = prompt_encoder(
                     entity_ids=batch["entity"],
                     token_embeds=token_embeds,
                     output_entity=True,
@@ -467,7 +467,7 @@ if __name__ == "__main__":
         for batch in tqdm(test_dataloader):
             with torch.no_grad():
                 token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-                prompt_embeds, loss_cl = prompt_encoder(
+                prompt_embeds, loss_cl, loss_lb = prompt_encoder(
                     entity_ids=batch["entity"],
                     token_embeds=token_embeds,
                     output_entity=True,

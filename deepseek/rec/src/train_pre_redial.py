@@ -376,7 +376,7 @@ if __name__ == "__main__":
         for step, batch in enumerate(train_dataloader):
             with torch.no_grad():
                 token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-            prompt_embeds, loss_cl = prompt_encoder(
+            prompt_embeds, loss_cl, loss_lb = prompt_encoder(
                 entity_ids=batch["entity"],
                 token_embeds=token_embeds,
                 output_entity=True,
@@ -388,7 +388,7 @@ if __name__ == "__main__":
                 model(**batch["context"], rec=True).rec_loss
                 / args.gradient_accumulation_steps
             )
-            loss = loss
+            loss = loss + loss_cl * 0.0001 + loss_lb * 0.01
             accelerator.backward(loss)
             train_loss.append(float(loss))
 
@@ -426,7 +426,7 @@ if __name__ == "__main__":
         for batch in tqdm(valid_dataloader):
             with torch.no_grad():
                 token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-                prompt_embeds, loss_cl = prompt_encoder(
+                prompt_embeds, loss_cl, loss_lb = prompt_encoder(
                     entity_ids=batch["entity"],
                     token_embeds=token_embeds,
                     output_entity=True,
@@ -467,7 +467,7 @@ if __name__ == "__main__":
         for batch in tqdm(test_dataloader):
             with torch.no_grad():
                 token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-                prompt_embeds, loss_cl = prompt_encoder(
+                prompt_embeds, loss_cl, loss_lb = prompt_encoder(
                     entity_ids=batch["entity"],
                     token_embeds=token_embeds,
                     output_entity=True,

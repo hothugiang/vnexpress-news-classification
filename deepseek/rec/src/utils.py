@@ -4,10 +4,10 @@ import torch
 import wandb
 import os
 
-PROJECT_NAME = 'Demonstration-enhanced CRS'
-RECOMMENDATION = 'recommendation'
-GENERATION = 'generation'
-MODEL_NAME = 'UNICRS'
+PROJECT_NAME = "Demonstration-enhanced CRS"
+RECOMMENDATION = "recommendation"
+GENERATION = "generation"
+MODEL_NAME = "UNICRS"
 
 MODEL_RELATED_PARAMS = [
     "n_examples",
@@ -16,7 +16,7 @@ MODEL_RELATED_PARAMS = [
     "learning_rate",
     "seed",
     "bias_only",
-    "learning_rate"
+    "learning_rate",
 ]
 
 
@@ -26,8 +26,8 @@ def padded_tensor(
     pad_tail: bool = True,
     max_len: Optional[int] = None,
     debug: bool = False,
-    device: torch.device = torch.device('cpu'),
-    use_amp: bool = False
+    device: torch.device = torch.device("cpu"),
+    use_amp: bool = False,
 ) -> torch.LongTensor:
     """Create a padded matrix from an uneven list of lists.
 
@@ -71,27 +71,9 @@ def padded_tensor(
         if pad_tail:
             output[i, :length] = item
         else:
-            output[i, t - length:] = item
+            output[i, t - length :] = item
 
     return output
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def convert_params_to_str(params):
@@ -103,7 +85,17 @@ def convert_params_to_str(params):
         param_str += s
     return param_str
 
-def init_wandb_run(project_name, dataset, task, tags, model_name, model_params, type_of_run = 'full', run_name = None):
+
+def init_wandb_run(
+    project_name,
+    dataset,
+    task,
+    tags,
+    model_name,
+    model_params,
+    type_of_run="full",
+    run_name=None,
+):
 
     ### project_name:
     ### task: recommendation or generation
@@ -113,26 +105,31 @@ def init_wandb_run(project_name, dataset, task, tags, model_name, model_params, 
     if run_name is None:
         run_name = convert_params_to_str(model_params)
 
-    run = wandb.init(project=f"{project_name}",
-            group = f"{dataset}-{task}/",
-            job_type = type_of_run,
-            tags = tags,
-            entity="HuyQuangDao",
-            reinit=True,
-            name = f"{model_name}-{run_name}")
+    run = wandb.init(
+        project=f"{project_name}",
+        group=f"{dataset}-{task}/",
+        job_type=type_of_run,
+        tags=tags,
+        entity="HuyQuangDao",
+        reinit=True,
+        name=f"{model_name}-{run_name}",
+    )
+
 
 def wandb_logging(eval_dict, step):
     for key, value in eval_dict.items():
-        wandb.log(data = {key:value}, step = step)
+        wandb.log(data={key: value}, step=step)
+
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-def freeze_model_params(gen_model, text_encoder, bias_only = True):
+
+def freeze_model_params(gen_model, text_encoder, bias_only=True):
     fix_modules = [text_encoder]
     for module in fix_modules:
         module.requires_grad_(False)
-    
+
     if bias_only:
         #### freeze parameters of the pretrained language model
         for param in gen_model.parameters():
@@ -144,21 +141,65 @@ def freeze_model_params(gen_model, text_encoder, bias_only = True):
         for para in gen_model.parameters():
             if len(para.shape) <= 1:
                 para.requires_grad_(True)
-    
+
         for para in text_encoder.parameters():
             if len(para.shape) <= 1:
                 para.requires_grad_(True)
 
+
 def save(model, save_dir):
     os.makedirs(save_dir, exist_ok=True)
-    state_dict = {k: v for k, v in model.state_dict().items() if 'edge' not in k}
-    save_path = os.path.join(save_dir, 'model.pt')
+    state_dict = {k: v for k, v in model.state_dict().items() if "edge" not in k}
+    save_path = os.path.join(save_dir, "model.pt")
     torch.save(state_dict, save_path)
 
 
 def load(model, load_dir):
-    load_path = os.path.join(load_dir, 'model.pt')
+    load_path = os.path.join(load_dir, "model.pt")
     missing_keys, unexpected_keys = model.load_state_dict(
-        torch.load(load_path, map_location=torch.device('cpu')), strict=False
+        torch.load(load_path, map_location=torch.device("cpu")), strict=False
     )
     return model
+
+
+def assert_device_map(device_map, num_blocks):
+    blocks = list(range(0, num_blocks))
+
+    device_map_blocks = [
+        item for sublist in list(device_map.values()) for item in sublist
+    ]
+
+    # Duplicate check
+    duplicate_blocks = []
+    for i in device_map_blocks:
+        if device_map_blocks.count(i) > 1 and i not in duplicate_blocks:
+            duplicate_blocks.append(i)
+    # Missing blocks
+    missing_blocks = [i for i in blocks if i not in device_map_blocks]
+    extra_blocks = [i for i in device_map_blocks if i not in blocks]
+
+    if len(duplicate_blocks) != 0:
+        raise ValueError(
+            "Duplicate attention blocks specified in device_map. Attention blocks must be specified to one device."
+            " These attention blocks were specified more than once: "
+            + str(duplicate_blocks)
+        )
+    if len(missing_blocks) != 0:
+        raise ValueError(
+            "There are attention blocks for this model that are not specified in the device_map. Add these attention "
+            "blocks to a device on the device_map: " + str(missing_blocks)
+        )
+    if len(extra_blocks) != 0:
+        raise ValueError(
+            "The device_map contains more attention blocks than this model has. Remove these from the device_map:"
+            + str(extra_blocks)
+        )
+
+
+def get_device_map(n_layers, devices):
+    """Returns a dictionary of layers distributed evenly across all devices."""
+    layers = list(range(n_layers))
+    n_blocks = int(ceil(n_layers / len(devices)))
+    layers_list = [layers[i : i + n_blocks] for i in range(0, n_layers, n_blocks)]
+
+    return dict(zip(devices, layers_list))

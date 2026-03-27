@@ -693,6 +693,20 @@ class MMPrompt(nn.Module):
         print(missing_keys, unexpected_keys)
 
 
+class RoutingState:
+    def __init__(self, batch_size, entity_len, device=None):
+        self.prev_g_hat = None  # g_hat^{(b-1)}
+        self.prev_momentum = None  # g_mom^{(b-1)}
+        self.prev_dialogue_emb = None
+        self.current_turn = 0
+
+    def reset(self):
+        self.prev_g_hat = None
+        self.prev_momentum = None
+        self.prev_dialogue_emb = None
+        self.current_turn = 0
+
+
 class DCMoMEPrompt(nn.Module):
     def __init__(
         self,
@@ -714,7 +728,7 @@ class DCMoMEPrompt(nn.Module):
         n_prefix_rec=None,
         n_prefix_conv=None,
     ):
-        super(MMPrompt, self).__init__()
+        super(DCMoMEPrompt, self).__init__()
         self.hidden_size = hidden_size
         self.n_head = n_head
         self.head_dim = hidden_size // n_head
@@ -722,6 +736,8 @@ class DCMoMEPrompt(nn.Module):
         self.n_block = n_block
         self.n_prefix_rec = n_prefix_rec
         self.n_prefix_conv = n_prefix_conv
+        self.d_k = d_k
+        self.d_ff = d_ff
 
         self.id_to_idx = id_to_idx
         # self.id_to_idx_tensor = torch.tensor([self.id_to_idx[i] for i in ids])
@@ -772,6 +788,25 @@ class DCMoMEPrompt(nn.Module):
             nn.LayerNorm(hidden_size),
         )
 
+        ## expert
+        self.expert_kg = nn.Sequential(
+            nn.Linear(hidden_size, d_ff),
+            nn.GELU(),
+            nn.Linear(d_ff, hidden_size),
+            nn.LayerNorm(hidden_size),
+        )
+        self.expert_txt = nn.Sequential(
+            nn.Linear(hidden_size, d_ff),
+            nn.GELU(),
+            nn.Linear(d_ff, hidden_size),
+            nn.LayerNorm(hidden_size),
+        )
+        self.expert_vis = nn.Sequential(
+            nn.Linear(hidden_size, d_ff),
+            nn.GELU(),
+            nn.Linear(d_ff, hidden_size),
+            nn.LayerNorm(hidden_size),
+        )
         # ========== 5. Dialogue-Conditioned Gating ==========
         self.gate_query = nn.Linear(hidden_size, hidden_size)  # W_Q
         self.gate_key_kg = nn.Linear(hidden_size, hidden_size)  # W_K^kg
@@ -855,15 +890,64 @@ class DCMoMEPrompt(nn.Module):
         image_embeds = self.image_embeddings[real_ids]
         return image_embeds
 
+    def get_entity_embeds(self) -> torch.Tensor:
+        """
+        Trả về bảng embedding [n_entity, hidden_size] dùng làm item scoring matrix
+        cho PromptGPT2forCRS: rec_logits = hidden_state @ entity_embeds.T
+
+        - Items (id_to_idx_tensor >= 0): fuse KG + text + visual (uniform routing 1/3 mỗi)
+        - Non-items (id_to_idx_tensor == -1): chỉ dùng KG embedding
+        """
+        node_embeds = self.node_embeds
+        e_kg_all = (
+            self.kg_encoder(node_embeds, self.edge_index, self.edge_type) + node_embeds
+        )
+        e_kg_all = (
+            self.entity_proj1(e_kg_all) + e_kg_all
+        )  # [n_entity, entity_hidden_size]
+        h_kg_all = self.kg_proj(e_kg_all)  # [n_entity, hidden_size]
+
+        entity_embeds_out = h_kg_all.clone()
+
+        item_mask = self.id_to_idx_tensor >= 0  # [n_entity] bool
+        item_kg_ids = torch.where(item_mask)[0]  # KG indices của items
+        item_emb_rows = self.id_to_idx_tensor[item_kg_ids]  # embedding row indices
+
+        if item_kg_ids.numel() > 0:
+            h_txt = self.txt_proj(
+                self.text_embeddings[item_emb_rows]
+            )  # [n_items, hidden]
+            h_vis = self.vis_proj(
+                self.image_embeddings[item_emb_rows]
+            )  # [n_items, hidden]
+            h_kg = h_kg_all[item_kg_ids]  # [n_items, hidden]
+            # Uniform routing (1/3) vì không có dialogue context
+            fused = (h_kg + h_txt + h_vis) / 3.0
+            entity_embeds_out[item_kg_ids] = fused
+
+        return entity_embeds_out  # [n_entity, hidden_size]
+
+    @staticmethod
+    def compute_topic_shift(
+        curr_emb: torch.Tensor, prev_emb: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Topic shift theo báo cáo §5.3 (Eq. 17):
+            δ_t = 1 - cosine_similarity(d_t, d_{t-1})
+        curr_emb, prev_emb: [B, hidden_size]
+        Trả về: [B] — scalar trong [0, 2], thường ∈ [0, 1]
+        """
+        # F.cosine_similarity trả về scalar per sample ∈ [-1, 1]
+        cos_sim = F.cosine_similarity(curr_emb, prev_emb, dim=-1)  # [B]
+        return (1.0 - cos_sim).clamp(min=0.0)  # [B], ∈ [0, 2]
+
     def compute_routing(
         self,
-        h_kg,
-        h_txt,
-        h_vis,
-        dialogue_emb,
-        prev_g_hat,
-        prev_momentum,
-        topic_shift,
+        h_kg: torch.Tensor,
+        h_txt: torch.Tensor,
+        h_vis: torch.Tensor,
+        dialogue_emb: torch.Tensor,
+        state: RoutingState,
     ):
         """
         Tính routing weights g_hat cho mỗi entity.
@@ -871,25 +955,36 @@ class DCMoMEPrompt(nn.Module):
         """
         batch_size, entity_len, _ = h_kg.shape
         # [B,1,1,hidden]
-        query = self.gate_query(dialogue_emb).unsqueeze(1).unsqueeze(1)
+        query = self.gate_query(dialogue_emb).unsqueeze(1)
 
-        scores_kg = (query * self.gate_key_kg(h_kg)).sum(dim=-1)
-        scores_txt = (query * self.gate_key_txt(h_txt)).sum(dim=-1)
-        scores_vis = (query * self.gate_key_vis(h_vis)).sum(dim=-1)
+        scores_kg = torch.matmul(
+            query, self.gate_key_kg(h_kg).transpose(-2, -1)
+        ).squeeze(1) / math.sqrt(self.d_k)
+        scores_txt = torch.matmul(
+            query, self.gate_key_txt(h_txt).transpose(-2, -1)
+        ).squeeze(1) / math.sqrt(self.d_k)
+        scores_vis = torch.matmul(
+            query, self.gate_key_vis(h_vis).transpose(-2, -1)
+        ).squeeze(1) / math.sqrt(self.d_k)
         scores = torch.stack([scores_kg, scores_txt, scores_vis], dim=-1)
 
         g = F.softmax(scores / math.sqrt(self.hidden_size), dim=-1)  # [B, L, 3]
 
         # ---- Bước 2: Momentum & Drift ----
-        if prev_g_hat is None or prev_momentum is None or topic_shift is None:
+        if state.current_turn == 0:
             # Nếu không có lịch sử (turn đầu tiên), dùng g trực tiếp
             g_hat = g
             momentum = g  # g_hat (cũng là momentum ban đầu)
         else:
             # EMA cập nhật momentum
-            momentum = self.beta * prev_momentum + (1 - self.beta) * prev_g_hat
+            momentum = (
+                self.beta * state.prev_momentum + (1 - self.beta) * state.prev_g_hat
+            )
 
             # Drift gate
+            topic_shift = self.compute_topic_shift(
+                dialogue_emb, state.prev_dialogue_emb
+            )
             topic_shift = topic_shift.view(batch_size, 1, 1)  # [B,1,1]
             drift_input = torch.cat(
                 [
@@ -905,17 +1000,21 @@ class DCMoMEPrompt(nn.Module):
 
         # Re-normalize trong trường hợp missing modality (đảm bảo tổng = 1)
         g_hat = g_hat / (g_hat.sum(dim=-1, keepdim=True) + 1e-8)
+        assert g_hat.dim() == 3, f"g_hat wrong shape: {g_hat.shape}"
 
+        # Update state
+        state.prev_g_hat = g_hat.detach()
+        state.prev_momentum = momentum.detach()
+        state.prev_dialogue_emb = dialogue_emb.detach()
+        state.current_turn += 1
         return g_hat, momentum, g
 
     def forward(
         self,
         entity_ids=None,  # [batch_size, entity_len]
         token_embeds=None,  # [batch_size, token_len, token_hidden_size]
-        dialogue_emb=None,  # [batch_size, hidden_size]  (turn-level)
-        prev_g_hat=None,  # optional [batch_size, entity_len, 3]
-        prev_momentum=None,  # optional [batch_size, entity_len, 3]
-        topic_shift=None,  # optional [batch_size] (scalar)
+        dialogue_emb=None,  # [B, hidden_size] — turn-level (optional, từ external encoder)
+        state=None,
         output_entity=False,
         use_rec_prefix=False,
         use_conv_prefix=False,
@@ -925,6 +1024,9 @@ class DCMoMEPrompt(nn.Module):
                        False => cho generation (token attend to entity)
         """
         batch_size, entity_embeds, entity_len, token_len = None, None, None, None
+        if state is None:
+            state = RoutingState(batch_size, entity_len)
+
         if entity_ids is not None:
             batch_size, entity_len = entity_ids.shape[:2]
             e_kg = self.get_kg_embeds(entity_ids=entity_ids)
@@ -946,18 +1048,13 @@ class DCMoMEPrompt(nn.Module):
         h_txt = self.txt_proj(e_txt)
         h_vis = self.vis_proj(e_vis)
 
-        experts = torch.stack(
-            [h_kg, h_txt, h_vis], dim=2
-        )  # (batch, entity_len, 3, hidden)
+        o_kg = self.expert_kg(h_kg)  # expert outputs
+        o_txt = self.expert_txt(h_txt)
+        o_vis = self.expert_vis(h_vis)
+        experts = torch.stack([o_kg, o_txt, o_vis], dim=2)
 
         g_hat, momentum, g = self.compute_routing(
-            h_kg,
-            h_txt,
-            h_vis,
-            routing_emb,
-            prev_g_hat,
-            prev_momentum,
-            topic_shift,
+            h_kg, h_txt, h_vis, routing_emb, state
         )
         entity_embeds = (g_hat.unsqueeze(-1) * experts).sum(dim=2)  # [B, L, hidden]
 
@@ -971,36 +1068,43 @@ class DCMoMEPrompt(nn.Module):
         loss_lb = num_experts * (f_k * P_k).sum()
 
         # Cross attn
-        attn_weights = self.cross_attn(token_embeds) @ entity_embeds.permute(0, 2, 1)
-        attn_weights /= self.hidden_size
-
-        if output_entity:
-            token_weights = F.softmax(attn_weights, dim=1).permute(0, 2, 1)
-            prompt_embeds = token_weights @ token_embeds + entity_embeds
-
-            token_weights_embeds = (
-                token_weights @ token_embeds
-            )  # 形状为 (batch_size, seq_len, num_entities)
-            token_rep = token_weights_embeds.mean(dim=1)  # (batch_size, hidden_size)
-            entity_rep = entity_embeds.mean(dim=1)  # (batch_size, hidden_size)
-            temperature = 0.07
-            logits = F.cosine_similarity(
-                token_rep.unsqueeze(1), entity_rep.unsqueeze(0), dim=-1
+        if entity_embeds is not None and token_embeds is not None:
+            attn_weights = self.cross_attn(token_embeds) @ entity_embeds.permute(
+                0, 2, 1
             )
-            logits /= temperature
-            labels = torch.arange(logits.size(0), device=logits.device)  # (batch_size,)
-            loss_cl = F.cross_entropy(logits, labels)
+            attn_weights /= self.hidden_size
+
+            if output_entity:
+                token_weights = F.softmax(attn_weights, dim=1).permute(0, 2, 1)
+                prompt_embeds = token_weights @ token_embeds + entity_embeds
+
+                token_weights_embeds = (
+                    token_weights @ token_embeds
+                )  # 形状为 (batch_size, seq_len, num_entities)
+                token_rep = token_weights_embeds.mean(
+                    dim=1
+                )  # (batch_size, hidden_size)
+                entity_rep = entity_embeds.mean(dim=1)  # (batch_size, hidden_size)
+                temperature = 0.07
+                logits = F.cosine_similarity(
+                    token_rep.unsqueeze(1), entity_rep.unsqueeze(0), dim=-1
+                )
+                logits /= temperature
+                labels = torch.arange(
+                    logits.size(0), device=logits.device
+                )  # (batch_size,)
+                loss_cl = F.cross_entropy(logits, labels)
+                prompt_len = entity_len
+            else:
+                entity_weights = F.softmax(attn_weights, dim=2)
+                prompt_embeds = entity_weights @ entity_embeds + token_embeds
+                prompt_len = token_len
+        elif entity_embeds is not None:
+            prompt_embeds = entity_embeds
             prompt_len = entity_len
         else:
-            entity_weights = F.softmax(attn_weights, dim=2)
-            prompt_embeds = entity_weights @ entity_embeds + token_embeds
+            prompt_embeds = token_embeds
             prompt_len = token_len
-        # elif entity_embeds is not None:
-        #     prompt_embeds = entity_embeds
-        #     prompt_len = entity_len
-        # else:
-        #     prompt_embeds = token_embeds
-        #     prompt_len = token_len
 
         if self.n_prefix_rec is not None and use_rec_prefix:
             prefix_embeds = (

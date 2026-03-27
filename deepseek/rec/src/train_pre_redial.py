@@ -60,7 +60,7 @@ def parse_args():
     parser.add_argument(
         "--text_tokenizer",
         type=str,
-        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/robert_base",
+        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/roberta_base",
     )
     parser.add_argument(
         "--model",
@@ -71,7 +71,7 @@ def parse_args():
     parser.add_argument(
         "--text_encoder",
         type=str,
-        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/robert_base",
+        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/roberta_base",
     )
     parser.add_argument("--num_bases", type=int, default=8, help="num_bases in RGCN.")
     parser.add_argument(

@@ -12,9 +12,14 @@ from accelerate.utils import set_seed
 from loguru import logger
 from torch.utils.data import DataLoader, random_split
 from tqdm.auto import tqdm
-from transformers import AdamW, get_linear_schedule_with_warmup, AutoTokenizer, AutoModel
+from transformers import (
+    AdamW,
+    get_linear_schedule_with_warmup,
+    AutoTokenizer,
+    AutoModel,
+)
 from config import gpt2_special_tokens_dict, prompt_special_tokens_dict
-from dataset_dbpedia_inspired import DBpedia ,Co_occurrence,text_sim,image_sim
+from dataset_dbpedia_inspired import DBpedia, Co_occurrence, text_sim, image_sim
 from dataset_rec import CRSRecDataset, CRSRecDataCollator
 from evaluate_rec import RecEvaluator
 from model_gpt2 import PromptGPT2forCRS
@@ -23,57 +28,132 @@ from model_prompt import MMPrompt_inspired
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=222, help="A seed for reproducible training.")
-    parser.add_argument("--output_dir", type=str, default='./inspired_model', help="Where to store the final model.")
-    parser.add_argument("--debug", action='store_true', help="Debug mode.")
-    parser.add_argument("--dataset", type=str, default='inspired', help="A file containing all data.")
+    parser.add_argument(
+        "--seed", type=int, default=222, help="A seed for reproducible training."
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="./inspired_model",
+        help="Where to store the final model.",
+    )
+    parser.add_argument("--debug", action="store_true", help="Debug mode.")
+    parser.add_argument(
+        "--dataset", type=str, default="inspired", help="A file containing all data."
+    )
     parser.add_argument("--shot", type=float, default=1)
     parser.add_argument("--use_resp", action="store_true")
-    parser.add_argument("--context_max_length", type=int, default=200,help="max input length in dataset.")
-    parser.add_argument("--prompt_max_length", type=int,default=200)
-    parser.add_argument("--entity_max_length", type=int,default=32, help="max entity length in dataset.")
-    parser.add_argument('--num_workers', type=int, default=0)
-    parser.add_argument("--tokenizer", type=str , default='/home/weiyibiao/weiyibiao/UniCRS-main/src/DialoGPT-small')
-    parser.add_argument("--text_tokenizer", type=str, default='/home/weiyibiao/weiyibiao/UniCRS-main/src/robert_base')
-    parser.add_argument("--model", type=str, default='/home/weiyibiao/weiyibiao/UniCRS-main/src/DialoGPT-small',
-                        help="Path to pretrained model or model identifier from huggingface.co/models.")
-    parser.add_argument("--text_encoder", type=str, default='/home/weiyibiao/weiyibiao/UniCRS-main/src/robert_base')
+    parser.add_argument(
+        "--context_max_length",
+        type=int,
+        default=200,
+        help="max input length in dataset.",
+    )
+    parser.add_argument("--prompt_max_length", type=int, default=200)
+    parser.add_argument(
+        "--entity_max_length",
+        type=int,
+        default=32,
+        help="max entity length in dataset.",
+    )
+    parser.add_argument("--num_workers", type=int, default=0)
+    parser.add_argument(
+        "--tokenizer",
+        type=str,
+        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/DialoGPT-small",
+    )
+    parser.add_argument(
+        "--text_tokenizer",
+        type=str,
+        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/roberta_base",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/DialoGPT-small",
+        help="Path to pretrained model or model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--text_encoder",
+        type=str,
+        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/roberta_base",
+    )
     parser.add_argument("--num_bases", type=int, default=8, help="num_bases in RGCN.")
-    parser.add_argument("--n_prefix_rec", type=int,default=10)
-    parser.add_argument("--prompt_encoder", type=str,default='/home/weiyibiao/MSCRS-main/rec/src/pre-trained-inspired/final')
-    parser.add_argument("--num_train_epochs", type=int, default=20, help="Total number of training epochs to perform.")
-    parser.add_argument("--max_train_steps", type=int, default=None,
-                        help="Total number of training steps to perform. If provided, overrides num_train_epochs.")
-    parser.add_argument("--per_device_train_batch_size", type=int, default=64,
-                        help="Batch size (per device) for the training dataloader.")
-    parser.add_argument("--per_device_eval_batch_size", type=int, default=64,
-                        help="Batch size (per device) for the evaluation dataloader.")
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=1,
-                        help="Number of updates steps to accumulate before performing a backward/update pass.")
-    parser.add_argument("--learning_rate", type=float, default=1e-4,
-                        help="Initial learning rate (after the potential warmup period) to use.")
-    parser.add_argument("--weight_decay", type=float, default=0, help="Weight decay to use.")
-    parser.add_argument('--max_grad_norm', type=float)
-    parser.add_argument('--num_warmup_steps', type=int,default=33)
-    parser.add_argument('--fp16', action='store_true')
+    parser.add_argument("--n_prefix_rec", type=int, default=10)
+    parser.add_argument(
+        "--prompt_encoder",
+        type=str,
+        default="/home/weiyibiao/MSCRS-main/rec/src/pre-trained-inspired/final",
+    )
+    parser.add_argument(
+        "--num_train_epochs",
+        type=int,
+        default=20,
+        help="Total number of training epochs to perform.",
+    )
+    parser.add_argument(
+        "--max_train_steps",
+        type=int,
+        default=None,
+        help="Total number of training steps to perform. If provided, overrides num_train_epochs.",
+    )
+    parser.add_argument(
+        "--per_device_train_batch_size",
+        type=int,
+        default=64,
+        help="Batch size (per device) for the training dataloader.",
+    )
+    parser.add_argument(
+        "--per_device_eval_batch_size",
+        type=int,
+        default=64,
+        help="Batch size (per device) for the evaluation dataloader.",
+    )
+    parser.add_argument(
+        "--gradient_accumulation_steps",
+        type=int,
+        default=1,
+        help="Number of updates steps to accumulate before performing a backward/update pass.",
+    )
+    parser.add_argument(
+        "--learning_rate",
+        type=float,
+        default=1e-4,
+        help="Initial learning rate (after the potential warmup period) to use.",
+    )
+    parser.add_argument(
+        "--weight_decay", type=float, default=0, help="Weight decay to use."
+    )
+    parser.add_argument("--max_grad_norm", type=float)
+    parser.add_argument("--num_warmup_steps", type=int, default=33)
+    parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--use_wandb", action="store_true", help="whether to use wandb")
     parser.add_argument("--entity", type=str, help="wandb username")
     parser.add_argument("--project", type=str, help="wandb exp project")
     parser.add_argument("--name", type=str, help="wandb exp name")
-    parser.add_argument("--log_all", action="store_true", help="log in all processes, otherwise only in rank0")
+    parser.add_argument(
+        "--log_all",
+        action="store_true",
+        help="log in all processes, otherwise only in rank0",
+    )
     args = parser.parse_args()
     return args
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     args = parse_args()
     config = vars(args)
     accelerator = Accelerator(device_placement=False)
     device = accelerator.device
     local_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     logger.remove()
-    logger.add(sys.stderr, level='DEBUG' if accelerator.is_local_main_process else 'ERROR')
-    logger.add(f'log/{local_time}.log', level='DEBUG' if accelerator.is_local_main_process else 'ERROR')
+    logger.add(
+        sys.stderr, level="DEBUG" if accelerator.is_local_main_process else "ERROR"
+    )
+    logger.add(
+        f"log/{local_time}.log",
+        level="DEBUG" if accelerator.is_local_main_process else "ERROR",
+    )
     logger.info(accelerator.state)
     logger.info(config)
 
@@ -83,13 +163,21 @@ if __name__ == '__main__':
         transformers.utils.logging.set_verbosity_error()
     if args.use_wandb:
         name = args.name if args.name else local_time
-        name += '_' + str(accelerator.process_index)
+        name += "_" + str(accelerator.process_index)
         if args.log_all:
-            group = args.name if args.name else 'DDP_' + local_time
-            run = wandb.init(entity=args.entity, project=args.project, group=group, config=config, name=name)
+            group = args.name if args.name else "DDP_" + local_time
+            run = wandb.init(
+                entity=args.entity,
+                project=args.project,
+                group=group,
+                config=config,
+                name=name,
+            )
         else:
             if accelerator.is_local_main_process:
-                run = wandb.init(entity=args.entity, project=args.project, config=config, name=name)
+                run = wandb.init(
+                    entity=args.entity, project=args.project, config=config, name=name
+                )
             else:
                 run = None
     else:
@@ -114,41 +202,69 @@ if __name__ == '__main__':
     text_encoder.resize_token_embeddings(len(text_tokenizer))
     text_encoder = text_encoder.to(device)
     train_dataset = CRSRecDataset(
-        dataset=args.dataset, split='train', debug=args.debug,
-        tokenizer=tokenizer, context_max_length=args.context_max_length, use_resp=args.use_resp,
-        prompt_tokenizer=text_tokenizer, prompt_max_length=args.prompt_max_length,
+        dataset=args.dataset,
+        split="train",
+        debug=args.debug,
+        tokenizer=tokenizer,
+        context_max_length=args.context_max_length,
+        use_resp=args.use_resp,
+        prompt_tokenizer=text_tokenizer,
+        prompt_max_length=args.prompt_max_length,
         entity_max_length=args.entity_max_length,
     )
-    print(kg['num_entities'] )
-    co = Co_occurrence(dataset=args.dataset, split='train', debug=args.debug ,all_items = kg['item_ids'],entity_max_length=args.entity_max_length,n_entity=kg['num_entities'] ).get_entity_co_info()
-    text_simi  = text_sim(pad_entity_id=kg['pad_entity_id']).get_entity_ts_info()
-    image_simi = image_sim(pad_entity_id=kg['pad_entity_id']).get_entity_is_info()
+    print(kg["num_entities"])
+    co = Co_occurrence(
+        dataset=args.dataset,
+        split="train",
+        debug=args.debug,
+        all_items=kg["item_ids"],
+        entity_max_length=args.entity_max_length,
+        n_entity=kg["num_entities"],
+    ).get_entity_co_info()
+    text_simi = text_sim(pad_entity_id=kg["pad_entity_id"]).get_entity_ts_info()
+    image_simi = image_sim(pad_entity_id=kg["pad_entity_id"]).get_entity_is_info()
     shot_len = int(len(train_dataset) * args.shot)
-    train_dataset = random_split(train_dataset, [shot_len, len(train_dataset) - shot_len])[0]
+    train_dataset = random_split(
+        train_dataset, [shot_len, len(train_dataset) - shot_len]
+    )[0]
     assert len(train_dataset) == shot_len
     valid_dataset = CRSRecDataset(
-        dataset=args.dataset, split='valid', debug=args.debug,
-        tokenizer=tokenizer, context_max_length=args.context_max_length, use_resp=args.use_resp,
-        prompt_tokenizer=text_tokenizer, prompt_max_length=args.prompt_max_length,
+        dataset=args.dataset,
+        split="valid",
+        debug=args.debug,
+        tokenizer=tokenizer,
+        context_max_length=args.context_max_length,
+        use_resp=args.use_resp,
+        prompt_tokenizer=text_tokenizer,
+        prompt_max_length=args.prompt_max_length,
         entity_max_length=args.entity_max_length,
     )
     test_dataset = CRSRecDataset(
-        dataset=args.dataset, split='test', debug=args.debug,
-        tokenizer=tokenizer, context_max_length=args.context_max_length, use_resp=args.use_resp,
-        prompt_tokenizer=text_tokenizer, prompt_max_length=args.prompt_max_length,
+        dataset=args.dataset,
+        split="test",
+        debug=args.debug,
+        tokenizer=tokenizer,
+        context_max_length=args.context_max_length,
+        use_resp=args.use_resp,
+        prompt_tokenizer=text_tokenizer,
+        prompt_max_length=args.prompt_max_length,
         entity_max_length=args.entity_max_length,
     )
     data_collator = CRSRecDataCollator(
-        tokenizer=tokenizer, device=device, debug=args.debug,
-        context_max_length=args.context_max_length, entity_max_length=args.entity_max_length,
-        pad_entity_id=kg['pad_entity_id'],
-        prompt_tokenizer=text_tokenizer, prompt_max_length=args.prompt_max_length,
+        tokenizer=tokenizer,
+        device=device,
+        debug=args.debug,
+        context_max_length=args.context_max_length,
+        entity_max_length=args.entity_max_length,
+        pad_entity_id=kg["pad_entity_id"],
+        prompt_tokenizer=text_tokenizer,
+        prompt_max_length=args.prompt_max_length,
     )
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=args.per_device_train_batch_size,
         collate_fn=data_collator,
-        shuffle=True
+        shuffle=True,
     )
     valid_dataloader = DataLoader(
         valid_dataset,
@@ -162,10 +278,21 @@ if __name__ == '__main__':
     )
 
     prompt_encoder = MMPrompt_inspired(
-        model.config.n_embd, text_encoder.config.hidden_size, model.config.n_head, model.config.n_layer, 2,
-        n_entity=kg['num_entities'], num_relations=kg['num_relations'], num_bases=args.num_bases,
-        edge_index=kg['edge_index'], edge_type=kg['edge_type'],edge_index_c = co['edge_index_c'],edge_index_t_s = text_simi['edge_index_t_s'],edge_index_i_s = image_simi['edge_index_i_s'],idx_to_id = text_simi['idx_to_id'],
-        n_prefix_rec=args.n_prefix_rec
+        model.config.n_embd,
+        text_encoder.config.hidden_size,
+        model.config.n_head,
+        model.config.n_layer,
+        2,
+        n_entity=kg["num_entities"],
+        num_relations=kg["num_relations"],
+        num_bases=args.num_bases,
+        edge_index=kg["edge_index"],
+        edge_type=kg["edge_type"],
+        edge_index_c=co["edge_index_c"],
+        edge_index_t_s=text_simi["edge_index_t_s"],
+        edge_index_i_s=image_simi["edge_index_i_s"],
+        idx_to_id=text_simi["idx_to_id"],
+        n_prefix_rec=args.n_prefix_rec,
     )
 
     if args.prompt_encoder is not None:
@@ -180,30 +307,54 @@ if __name__ == '__main__':
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
         {
-            "params": [p for model in modules for n, p in model.named_parameters()
-                       if not any(nd in n for nd in no_decay) and p.requires_grad],
+            "params": [
+                p
+                for model in modules
+                for n, p in model.named_parameters()
+                if not any(nd in n for nd in no_decay) and p.requires_grad
+            ],
             "weight_decay": args.weight_decay,
         },
         {
-            "params": [p for model in modules for n, p in model.named_parameters()
-                       if any(nd in n for nd in no_decay) and p.requires_grad],
+            "params": [
+                p
+                for model in modules
+                for n, p in model.named_parameters()
+                if any(nd in n for nd in no_decay) and p.requires_grad
+            ],
             "weight_decay": 0.0,
         },
     ]
     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
     evaluator = RecEvaluator()
-    prompt_encoder, optimizer, train_dataloader, valid_dataloader, test_dataloader = accelerator.prepare(
-        prompt_encoder, optimizer, train_dataloader, valid_dataloader, test_dataloader
+    prompt_encoder, optimizer, train_dataloader, valid_dataloader, test_dataloader = (
+        accelerator.prepare(
+            prompt_encoder,
+            optimizer,
+            train_dataloader,
+            valid_dataloader,
+            test_dataloader,
+        )
     )
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(
+        len(train_dataloader) / args.gradient_accumulation_steps
+    )
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     else:
-        args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
-    total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
+        args.num_train_epochs = math.ceil(
+            args.max_train_steps / num_update_steps_per_epoch
+        )
+    total_batch_size = (
+        args.per_device_train_batch_size
+        * accelerator.num_processes
+        * args.gradient_accumulation_steps
+    )
     completed_steps = 0
     # lr_scheduler
-    lr_scheduler = get_linear_schedule_with_warmup(optimizer, args.num_warmup_steps, args.max_train_steps)
+    lr_scheduler = get_linear_schedule_with_warmup(
+        optimizer, args.num_warmup_steps, args.max_train_steps
+    )
     lr_scheduler = accelerator.prepare(lr_scheduler)
     # training info
     logger.info("***** Running training *****")
@@ -212,21 +363,27 @@ if __name__ == '__main__':
     logger.info(f"  Num valid examples = {len(valid_dataset)}")
 
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
-    logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
-    logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
+    logger.info(
+        f"  Instantaneous batch size per device = {args.per_device_train_batch_size}"
+    )
+    logger.info(
+        f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
+    )
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     # Only show the progress bar once on each machine.
-    progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
+    progress_bar = tqdm(
+        range(args.max_train_steps), disable=not accelerator.is_local_main_process
+    )
 
     # save model with best metric
-    metric, mode = 'loss', -1
+    metric, mode = "loss", -1
     assert mode in (-1, 1)
     if mode == 1:
         best_metric = 0
     else:
-        best_metric = float('inf')
-    best_metric_dir = os.path.join(args.output_dir, 'best')
+        best_metric = float("inf")
+    best_metric_dir = os.path.join(args.output_dir, "best")
     os.makedirs(best_metric_dir, exist_ok=True)
 
     # train loop
@@ -235,24 +392,32 @@ if __name__ == '__main__':
         prompt_encoder.train()
         for step, batch in enumerate(train_dataloader):
             with torch.no_grad():
-                token_embeds = text_encoder(**batch['prompt']).last_hidden_state
-            prompt_embeds,loss_cl = prompt_encoder(
-                entity_ids=batch['entity'],
+                token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
+            prompt_embeds, loss_cl = prompt_encoder(
+                entity_ids=batch["entity"],
                 token_embeds=token_embeds,
                 output_entity=True,
-                use_rec_prefix=True
+                use_rec_prefix=True,
             )
-            batch['context']['prompt_embeds'] = prompt_embeds
-            batch['context']['entity_embeds'] = prompt_encoder.get_entity_embeds()
-            loss = model(**batch['context'], rec=True).rec_loss / args.gradient_accumulation_steps
-            loss = loss +loss_cl*0.0001
+            batch["context"]["prompt_embeds"] = prompt_embeds
+            batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()
+            loss = (
+                model(**batch["context"], rec=True).rec_loss
+                / args.gradient_accumulation_steps
+            )
+            loss = loss + loss_cl * 0.0001
             accelerator.backward(loss)
             train_loss.append(float(loss))
 
             # optim step
-            if step % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
+            if (
+                step % args.gradient_accumulation_steps == 0
+                or step == len(train_dataloader) - 1
+            ):
                 if args.max_grad_norm is not None:
-                    accelerator.clip_grad_norm_(prompt_encoder.parameters(), args.max_grad_norm)
+                    accelerator.clip_grad_norm_(
+                        prompt_encoder.parameters(), args.max_grad_norm
+                    )
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
@@ -260,14 +425,16 @@ if __name__ == '__main__':
                 progress_bar.update(1)
                 completed_steps += 1
                 if run:
-                    run.log({'loss': np.mean(train_loss) * args.gradient_accumulation_steps})
+                    run.log(
+                        {"loss": np.mean(train_loss) * args.gradient_accumulation_steps}
+                    )
 
             if completed_steps >= args.max_train_steps:
                 break
 
         # metric
         train_loss = np.mean(train_loss) * args.gradient_accumulation_steps
-        logger.info(f'epoch {epoch} train loss {train_loss}')
+        logger.info(f"epoch {epoch} train loss {train_loss}")
 
         del train_loss, batch
 
@@ -276,22 +443,25 @@ if __name__ == '__main__':
         prompt_encoder.eval()
         for batch in tqdm(valid_dataloader):
             with torch.no_grad():
-                token_embeds = text_encoder(**batch['prompt']).last_hidden_state
-                prompt_embeds,loss_cl = prompt_encoder(
-                    entity_ids=batch['entity'],
+                token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
+                prompt_embeds, loss_cl = prompt_encoder(
+                    entity_ids=batch["entity"],
                     token_embeds=token_embeds,
                     output_entity=True,
-                    use_rec_prefix=True
+                    use_rec_prefix=True,
                 )
-                batch['context']['prompt_embeds'] = prompt_embeds
-                batch['context']['entity_embeds'] = prompt_encoder.get_entity_embeds()
+                batch["context"]["prompt_embeds"] = prompt_embeds
+                batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()
 
-                outputs = model(**batch['context'], rec=True)
+                outputs = model(**batch["context"], rec=True)
                 valid_loss.append(float(outputs.rec_loss))
-                logits = outputs.rec_logits[:, kg['item_ids']]
+                logits = outputs.rec_logits[:, kg["item_ids"]]
                 ranks = torch.topk(logits, k=50, dim=-1).indices.tolist()
-                ranks = [[kg['item_ids'][rank] for rank in batch_rank] for batch_rank in ranks]
-                labels = batch['context']['rec_labels']
+                ranks = [
+                    [kg["item_ids"][rank] for rank in batch_rank]
+                    for batch_rank in ranks
+                ]
+                labels = batch["context"]["rec_labels"]
                 evaluator.evaluate(ranks, labels)
 
         # metric
@@ -301,40 +471,43 @@ if __name__ == '__main__':
 
         valid_report = {}
         for k, v in report.items():
-            if k != 'count':
-                valid_report[f'valid/{k}'] = v / report['count']
-        valid_report['valid/loss'] = np.mean(valid_loss)
-        valid_report['epoch'] = epoch
-        logger.info(f'{valid_report}')
+            if k != "count":
+                valid_report[f"valid/{k}"] = v / report["count"]
+        valid_report["valid/loss"] = np.mean(valid_loss)
+        valid_report["epoch"] = epoch
+        logger.info(f"{valid_report}")
         if run:
             run.log(valid_report)
         evaluator.reset_metric()
 
-        if valid_report[f'valid/{metric}'] * mode > best_metric * mode:
+        if valid_report[f"valid/{metric}"] * mode > best_metric * mode:
             prompt_encoder.save(best_metric_dir)
-            best_metric = valid_report[f'valid/{metric}']
-            logger.info(f'new best model with {metric}')
+            best_metric = valid_report[f"valid/{metric}"]
+            logger.info(f"new best model with {metric}")
 
         # test
         test_loss = []
         prompt_encoder.eval()
         for batch in tqdm(test_dataloader):
             with torch.no_grad():
-                token_embeds = text_encoder(**batch['prompt']).last_hidden_state
-                prompt_embeds,loss_cl = prompt_encoder(
-                    entity_ids=batch['entity'],
+                token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
+                prompt_embeds, loss_cl = prompt_encoder(
+                    entity_ids=batch["entity"],
                     token_embeds=token_embeds,
                     output_entity=True,
-                    use_rec_prefix=True
+                    use_rec_prefix=True,
                 )
-                batch['context']['prompt_embeds'] = prompt_embeds
-                batch['context']['entity_embeds'] = prompt_encoder.get_entity_embeds()
-                outputs = model(**batch['context'], rec=True)
+                batch["context"]["prompt_embeds"] = prompt_embeds
+                batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()
+                outputs = model(**batch["context"], rec=True)
                 test_loss.append(float(outputs.rec_loss))
-                logits = outputs.rec_logits[:, kg['item_ids']]
+                logits = outputs.rec_logits[:, kg["item_ids"]]
                 ranks = torch.topk(logits, k=50, dim=-1).indices.tolist()
-                ranks = [[kg['item_ids'][rank] for rank in batch_rank] for batch_rank in ranks]
-                labels = batch['context']['rec_labels']
+                ranks = [
+                    [kg["item_ids"][rank] for rank in batch_rank]
+                    for batch_rank in ranks
+                ]
+                labels = batch["context"]["rec_labels"]
                 evaluator.evaluate(ranks, labels)
         # metric
         report = accelerator.gather(evaluator.report())
@@ -342,14 +515,14 @@ if __name__ == '__main__':
             report[k] = v.sum().item()
         test_report = {}
         for k, v in report.items():
-            if k != 'count':
-                test_report[f'test/{k}'] = v / report['count']
-        test_report['test/loss'] = np.mean(test_loss)
-        test_report['epoch'] = epoch
-        logger.info(f'{test_report}')
+            if k != "count":
+                test_report[f"test/{k}"] = v / report["count"]
+        test_report["test/loss"] = np.mean(test_loss)
+        test_report["epoch"] = epoch
+        logger.info(f"{test_report}")
         if run:
             run.log(test_report)
         evaluator.reset_metric()
-    final_dir = os.path.join(args.output_dir, 'final')
+    final_dir = os.path.join(args.output_dir, "final")
     prompt_encoder.save(final_dir)
-    logger.info(f'save final model')
+    logger.info(f"save final model")

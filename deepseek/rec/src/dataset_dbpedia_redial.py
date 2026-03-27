@@ -16,7 +16,7 @@ import pickle
 class DBpedia:
     def __init__(self, dataset, debug=False):
         self.debug = debug
-        self.dataset_dir = os.path.join("/home/weiyibiao/MSCRS-main/data", dataset)
+        self.dataset_dir = os.path.join("rec_data", dataset)
         with open(
             os.path.join(self.dataset_dir, "dbpedia_subkg.json"), "r", encoding="utf-8"
         ) as f:
@@ -102,7 +102,7 @@ class Co_occurrence:
         self.debug = debug
         self.entity_max_length = entity_max_length
         self.all_items = set(all_items)
-        input_file = "/home/weiyibiao/MSCRS-main/data/redial/edge_index_c.pt"
+        input_file = "rec_data/redial/edge_index_c.pt"
         self.edge_index_c = torch.load(input_file)
 
     def get_entity_co_info(self):
@@ -114,7 +114,7 @@ class Co_occurrence:
 
 class text_sim:
     def __init__(self, pad_entity_id):
-        dataset_dir = "/home/weiyibiao/MSCRS-main/data/redial"
+        dataset_dir = "rec_data/redial"
         data_file = os.path.join(dataset_dir, "id_embeddings_text.json")
         self.co = []
         self.pad_entity_id = pad_entity_id
@@ -145,7 +145,7 @@ class text_sim:
 
 class image_sim:
     def __init__(self, pad_entity_id):
-        dataset_dir = "/home/weiyibiao/MSCRS-main/data/redial"
+        dataset_dir = "rec_data/redial"
         data_file = os.path.join(dataset_dir, "id_embeddings_image.json")
         self.co = []
         self.pad_entity_id = pad_entity_id

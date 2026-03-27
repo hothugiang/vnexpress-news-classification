@@ -181,7 +181,9 @@ if __name__ == "__main__":
         torch.backends.cudnn.deterministic = True
     if args.output_dir is not None:
         os.makedirs(args.output_dir, exist_ok=True)
-    kg = DBpedia(dataset=args.dataset, debug=args.debug).get_entity_kg_info()
+    kg = DBpedia(
+        dataset_dir=args.dataset_dir, dataset=args.dataset, debug=args.debug
+    ).get_entity_kg_info()
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     tokenizer.add_special_tokens(gpt2_special_tokens_dict)
     model = PromptGPT2forCRS.from_pretrained(args.model)
@@ -194,6 +196,7 @@ if __name__ == "__main__":
     text_encoder.resize_token_embeddings(len(text_tokenizer))
     text_encoder = text_encoder.to(device)
     train_dataset = CRSDataset(
+        dataset_dir=args.dataset_dir,
         dataset=args.dataset,
         split="train",
         tokenizer=tokenizer,
@@ -216,6 +219,7 @@ if __name__ == "__main__":
     image_simi = image_sim(pad_entity_id=kg["pad_entity_id"]).get_entity_is_info()
 
     valid_dataset = CRSDataset(
+        dataset_dir=args.dataset_dir,
         dataset=args.dataset,
         split="valid",
         tokenizer=tokenizer,
@@ -226,6 +230,7 @@ if __name__ == "__main__":
         entity_max_length=args.entity_max_length,
     )
     test_dataset = CRSDataset(
+        dataset_dir=args.dataset_dir,
         dataset=args.dataset,
         split="test",
         tokenizer=tokenizer,

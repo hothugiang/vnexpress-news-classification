@@ -14,9 +14,9 @@ import pickle
 
 
 class DBpedia:
-    def __init__(self, dataset, debug=False):
+    def __init__(self, dataset_dir, dataset, debug=False):
         self.debug = debug
-        self.dataset_dir = os.path.join("rec_data", dataset)
+        self.dataset_dir = os.path.join(dataset_dir, dataset)
         with open(
             os.path.join(self.dataset_dir, "dbpedia_subkg.json"), "r", encoding="utf-8"
         ) as f:
@@ -113,9 +113,8 @@ class Co_occurrence:
 
 
 class text_sim:
-    def __init__(self, pad_entity_id):
-        dataset_dir = "rec_data/redial"
-        data_file = os.path.join(dataset_dir, "id_embeddings_text.json")
+    def __init__(self, dataset_dir, dataset, pad_entity_id):
+        data_file = os.path.join(dataset_dir, dataset, "id_embeddings_text.json")
         self.co = []
         self.pad_entity_id = pad_entity_id
         self.prepare_data(data_file)
@@ -144,9 +143,8 @@ class text_sim:
 
 
 class image_sim:
-    def __init__(self, pad_entity_id):
-        dataset_dir = "rec_data/redial"
-        data_file = os.path.join(dataset_dir, "id_embeddings_image.json")
+    def __init__(self, dataset_dir, dataset, pad_entity_id):
+        data_file = os.path.join(dataset_dir, dataset, "id_embeddings_image.json")
         self.co = []
         self.pad_entity_id = pad_entity_id
         self.prepare_data(data_file)

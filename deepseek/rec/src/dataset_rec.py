@@ -11,7 +11,7 @@ from utils import padded_tensor
 class CRSRecDataset(Dataset):
     def __init__(
         self,
-        dataset,
+        dataset_dir,
         split,
         tokenizer,
         debug=False,
@@ -40,7 +40,6 @@ class CRSRecDataset(Dataset):
         if self.entity_max_length is None:
             self.entity_max_length = self.tokenizer.model_max_length
 
-        dataset_dir = os.path.join("rec_data", dataset)
         data_file = os.path.join(dataset_dir, f"{split}_data_train.jsonl")
         self.data = []
         self.prepare_data(data_file)

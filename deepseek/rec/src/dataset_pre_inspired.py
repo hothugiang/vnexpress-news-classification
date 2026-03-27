@@ -25,6 +25,7 @@ from utils import padded_tensor
 class CRSDataset(Dataset):
     def __init__(
         self,
+        dataset_dir,
         dataset,
         split,
         tokenizer,
@@ -52,8 +53,7 @@ class CRSDataset(Dataset):
         if self.entity_max_length is None:
             self.entity_max_length = self.tokenizer.model_max_length
 
-        dataset_dir = os.path.join("rec_data", dataset)
-        data_file = os.path.join(dataset_dir, f"{split}_data_pretrain.jsonl")
+        data_file = os.path.join(dataset_dir, dataset, f"{split}_data_pretrain.jsonl")
         self.data = []
         self.prepare_data(data_file)
 

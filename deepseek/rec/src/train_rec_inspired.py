@@ -39,6 +39,12 @@ def parse_args():
     )
     parser.add_argument("--debug", action="store_true", help="Debug mode.")
     parser.add_argument(
+        "--dataset_dir",
+        type=str,
+        default="rec_data",
+        help="A file containing all data.",
+    )
+    parser.add_argument(
         "--dataset", type=str, default="inspired", help="A file containing all data."
     )
     parser.add_argument("--shot", type=float, default=1)
@@ -189,7 +195,9 @@ if __name__ == "__main__":
     if args.output_dir is not None:
         os.makedirs(args.output_dir, exist_ok=True)
 
-    kg = DBpedia(dataset=args.dataset, debug=args.debug).get_entity_kg_info()
+    kg = DBpedia(
+        dataset_dir=args.dataset_dir, dataset=args.dataset, debug=args.debug
+    ).get_entity_kg_info()
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     tokenizer.add_special_tokens(gpt2_special_tokens_dict)
     model = PromptGPT2forCRS.from_pretrained(args.model)
@@ -202,6 +210,7 @@ if __name__ == "__main__":
     text_encoder.resize_token_embeddings(len(text_tokenizer))
     text_encoder = text_encoder.to(device)
     train_dataset = CRSRecDataset(
+        dataset_dir=args.dataset_dir,
         dataset=args.dataset,
         split="train",
         debug=args.debug,
@@ -229,6 +238,7 @@ if __name__ == "__main__":
     )[0]
     assert len(train_dataset) == shot_len
     valid_dataset = CRSRecDataset(
+        dataset_dir=args.dataset_dir,
         dataset=args.dataset,
         split="valid",
         debug=args.debug,
@@ -240,6 +250,7 @@ if __name__ == "__main__":
         entity_max_length=args.entity_max_length,
     )
     test_dataset = CRSRecDataset(
+        dataset_dir=args.dataset_dir,
         dataset=args.dataset,
         split="test",
         debug=args.debug,

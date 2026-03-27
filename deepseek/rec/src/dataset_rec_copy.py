@@ -12,6 +12,7 @@ import pickle
 class CRSRecDataset(Dataset):
     def __init__(
         self,
+        dataset_dir,
         dataset,
         split,
         tokenizer,
@@ -37,8 +38,8 @@ class CRSRecDataset(Dataset):
         self.entity_max_length = entity_max_length
         if self.entity_max_length is None:
             self.entity_max_length = self.tokenizer.model_max_length
-        dataset_dir = os.path.join("rec_data", dataset)
-        data_file = os.path.join(dataset_dir, f"{split}_data.jsonl")
+
+        data_file = os.path.join(dataset_dir, dataset, f"{split}_data.jsonl")
         self.data = []
         self.prepare_data(data_file)
 

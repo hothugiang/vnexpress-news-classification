@@ -135,7 +135,7 @@ def parse_args():
     parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--use_wandb", action="store_true", help="whether to use wandb")
     parser.add_argument(
-        "--entity", type=str, help="wandb username", default="longhv-research-vnu"
+        "--entity", type=str, help="wandb username", default="longvh-research-vnu"
     )
     parser.add_argument("--project", type=str, help="wandb exp project", default="MCRS")
     parser.add_argument("--name", type=str, help="wandb exp name")

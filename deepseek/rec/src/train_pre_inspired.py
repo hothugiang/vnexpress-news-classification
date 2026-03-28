@@ -393,13 +393,13 @@ if __name__ == "__main__":
         for step, batch in enumerate(train_dataloader):
             with torch.no_grad():
                 token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-            prompt_embeds, loss_cl, loss_lb = prompt_encoder(
+            prompt_embeds, loss_cl, loss_lb, entity_embeds_all = prompt_encoder(
                 entity_ids=batch["entity"],
                 token_embeds=token_embeds,
                 output_entity=True,
             )
             batch["context"]["prompt_embeds"] = prompt_embeds
-            batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()[0]
+            batch["context"]["entity_embeds"] = entity_embeds_all
 
             loss = (
                 model(**batch["context"], rec=True).rec_loss
@@ -444,15 +444,13 @@ if __name__ == "__main__":
         for batch in tqdm(valid_dataloader):
             with torch.no_grad():
                 token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-                prompt_embeds, loss_cl, loss_lb = prompt_encoder(
+                prompt_embeds, loss_cl, loss_lb, entity_embeds_all = prompt_encoder(
                     entity_ids=batch["entity"],
                     token_embeds=token_embeds,
                     output_entity=True,
                 )
                 batch["context"]["prompt_embeds"] = prompt_embeds
-                batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()[
-                    0
-                ]
+                batch["context"]["entity_embeds"] = entity_embeds_all
 
                 outputs = model(**batch["context"], rec=True)
                 valid_loss.append(float(outputs.rec_loss))
@@ -488,15 +486,13 @@ if __name__ == "__main__":
         for batch in tqdm(test_dataloader):
             with torch.no_grad():
                 token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-                prompt_embeds, loss_cl, loss_lb = prompt_encoder(
+                prompt_embeds, loss_cl, loss_lb, entity_embeds_all = prompt_encoder(
                     entity_ids=batch["entity"],
                     token_embeds=token_embeds,
                     output_entity=True,
                 )
                 batch["context"]["prompt_embeds"] = prompt_embeds
-                batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()[
-                    0
-                ]
+                batch["context"]["entity_embeds"] = entity_embeds_all
 
                 outputs = model(**batch["context"], rec=True)
                 test_loss.append(float(outputs.rec_loss))

@@ -13,11 +13,11 @@ from loguru import logger
 from torch.utils.data import DataLoader, random_split
 from tqdm.auto import tqdm
 from transformers import (
-    AdamW,
     get_linear_schedule_with_warmup,
     AutoTokenizer,
     AutoModel,
 )
+from torch.optim import AdamW
 from config import gpt2_special_tokens_dict, prompt_special_tokens_dict
 from dataset_dbpedia_inspired import DBpedia, Co_occurrence, text_sim, image_sim
 from dataset_rec import CRSRecDataset, CRSRecDataCollator

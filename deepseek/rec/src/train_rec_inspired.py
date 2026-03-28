@@ -23,7 +23,7 @@ from dataset_dbpedia_inspired import DBpedia, Co_occurrence, text_sim, image_sim
 from dataset_rec import CRSRecDataset, CRSRecDataCollator
 from evaluate_rec import RecEvaluator
 from model_gpt2 import PromptGPT2forCRS
-from model_prompt import MMPrompt_inspired
+from model_prompt import DCMoMEPrompt
 
 
 def parse_args():
@@ -34,7 +34,7 @@ def parse_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="./inspired_model",
+        default="output/inspired_model",
         help="Where to store the final model.",
     )
     parser.add_argument("--debug", action="store_true", help="Debug mode.")
@@ -66,30 +66,30 @@ def parse_args():
     parser.add_argument(
         "--tokenizer",
         type=str,
-        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/DialoGPT-small",
+        default="models/DialoGPT-small",
     )
     parser.add_argument(
         "--text_tokenizer",
         type=str,
-        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/roberta_base",
+        default="models/roberta_base",
     )
     parser.add_argument(
         "--model",
         type=str,
-        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/DialoGPT-small",
+        default="models/DialoGPT-small",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
         "--text_encoder",
         type=str,
-        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/roberta_base",
+        default="models/roberta_base",
     )
     parser.add_argument("--num_bases", type=int, default=8, help="num_bases in RGCN.")
     parser.add_argument("--n_prefix_rec", type=int, default=10)
     parser.add_argument(
         "--prompt_encoder",
         type=str,
-        default="/home/weiyibiao/MSCRS-main/rec/src/pre-trained-inspired/final",
+        default="output/pre-trained-inspired/final",
     )
     parser.add_argument(
         "--num_train_epochs",
@@ -134,8 +134,10 @@ def parse_args():
     parser.add_argument("--num_warmup_steps", type=int, default=33)
     parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--use_wandb", action="store_true", help="whether to use wandb")
-    parser.add_argument("--entity", type=str, help="wandb username")
-    parser.add_argument("--project", type=str, help="wandb exp project")
+    parser.add_argument(
+        "--entity", type=str, help="wandb username", default="longhv-research-vnu"
+    )
+    parser.add_argument("--project", type=str, help="wandb exp project", default="MCRS")
     parser.add_argument("--name", type=str, help="wandb exp name")
     parser.add_argument(
         "--log_all",
@@ -288,7 +290,7 @@ if __name__ == "__main__":
         collate_fn=data_collator,
     )
 
-    prompt_encoder = MMPrompt_inspired(
+    prompt_encoder = DCMoMEPrompt(
         model.config.n_embd,
         text_encoder.config.hidden_size,
         model.config.n_head,
@@ -299,10 +301,9 @@ if __name__ == "__main__":
         num_bases=args.num_bases,
         edge_index=kg["edge_index"],
         edge_type=kg["edge_type"],
-        edge_index_c=co["edge_index_c"],
-        edge_index_t_s=text_simi["edge_index_t_s"],
-        edge_index_i_s=image_simi["edge_index_i_s"],
-        idx_to_id=text_simi["idx_to_id"],
+        text_embeddings=text_simi["embeddings"],
+        image_embeddings=image_simi["embeddings"],
+        id_to_idx=text_simi["id_to_idx"],
         n_prefix_rec=args.n_prefix_rec,
     )
 
@@ -411,9 +412,7 @@ if __name__ == "__main__":
                 use_rec_prefix=True,
             )
             batch["context"]["prompt_embeds"] = prompt_embeds
-            batch["context"]["entity_embeds"] = (
-                prompt_encoder.module.get_entity_embeds()
-            )
+            batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()
             loss = (
                 model(**batch["context"], rec=True).rec_loss
                 / args.gradient_accumulation_steps
@@ -464,9 +463,7 @@ if __name__ == "__main__":
                     use_rec_prefix=True,
                 )
                 batch["context"]["prompt_embeds"] = prompt_embeds
-                batch["context"]["entity_embeds"] = (
-                    prompt_encoder.module.get_entity_embeds()
-                )
+                batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()
 
                 outputs = model(**batch["context"], rec=True)
                 valid_loss.append(float(outputs.rec_loss))
@@ -513,9 +510,7 @@ if __name__ == "__main__":
                     use_rec_prefix=True,
                 )
                 batch["context"]["prompt_embeds"] = prompt_embeds
-                batch["context"]["entity_embeds"] = (
-                    prompt_encoder.module.get_entity_embeds()
-                )
+                batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()
                 outputs = model(**batch["context"], rec=True)
                 test_loss.append(float(outputs.rec_loss))
                 logits = outputs.rec_logits[:, kg["item_ids"]]

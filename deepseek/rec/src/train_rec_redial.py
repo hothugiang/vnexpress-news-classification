@@ -389,9 +389,7 @@ if __name__ == "__main__":
                 use_rec_prefix=True,
             )
             batch["context"]["prompt_embeds"] = prompt_embeds
-            batch["context"]["entity_embeds"] = (
-                prompt_encoder.module.get_entity_embeds()
-            )
+            batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()[0]
             loss = (
                 model(**batch["context"], rec=True).rec_loss
                 / args.gradient_accumulation_steps
@@ -434,9 +432,9 @@ if __name__ == "__main__":
                     use_rec_prefix=True,
                 )
                 batch["context"]["prompt_embeds"] = prompt_embeds
-                batch["context"]["entity_embeds"] = (
-                    prompt_encoder.module.get_entity_embeds()
-                )
+                batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()[
+                    0
+                ]
                 outputs = model(**batch["context"], rec=True)
                 valid_loss.append(float(outputs.rec_loss))
                 logits = outputs.rec_logits[:, kg["item_ids"]]
@@ -481,9 +479,9 @@ if __name__ == "__main__":
                     use_rec_prefix=True,
                 )
                 batch["context"]["prompt_embeds"] = prompt_embeds
-                batch["context"]["entity_embeds"] = (
-                    prompt_encoder.module.get_entity_embeds()
-                )
+                batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()[
+                    0
+                ]
 
                 outputs = model(**batch["context"], rec=True)
                 test_loss.append(float(outputs.rec_loss))

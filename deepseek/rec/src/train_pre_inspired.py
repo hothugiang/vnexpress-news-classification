@@ -399,9 +399,7 @@ if __name__ == "__main__":
                 output_entity=True,
             )
             batch["context"]["prompt_embeds"] = prompt_embeds
-            batch["context"]["entity_embeds"] = (
-                prompt_encoder.module.get_entity_embeds()
-            )
+            batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()[0]
 
             loss = (
                 model(**batch["context"], rec=True).rec_loss
@@ -452,9 +450,9 @@ if __name__ == "__main__":
                     output_entity=True,
                 )
                 batch["context"]["prompt_embeds"] = prompt_embeds
-                batch["context"]["entity_embeds"] = (
-                    prompt_encoder.module.get_entity_embeds()
-                )
+                batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()[
+                    0
+                ]
 
                 outputs = model(**batch["context"], rec=True)
                 valid_loss.append(float(outputs.rec_loss))
@@ -496,9 +494,9 @@ if __name__ == "__main__":
                     output_entity=True,
                 )
                 batch["context"]["prompt_embeds"] = prompt_embeds
-                batch["context"]["entity_embeds"] = (
-                    prompt_encoder.module.get_entity_embeds()
-                )
+                batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()[
+                    0
+                ]
 
                 outputs = model(**batch["context"], rec=True)
                 test_loss.append(float(outputs.rec_loss))

@@ -224,16 +224,24 @@ if __name__ == "__main__":
         entity_max_length=args.entity_max_length,
     )
     print(kg["num_entities"])
-    co = Co_occurrence(
+    # co = Co_occurrence(
+    #     dataset=args.dataset,
+    #     split="train",
+    #     debug=args.debug,
+    #     all_items=kg["item_ids"],
+    #     entity_max_length=args.entity_max_length,
+    #     n_entity=kg["num_entities"],
+    # ).get_entity_co_info()
+    text_simi = text_sim(
+        dataset_dir=args.dataset_dir,
         dataset=args.dataset,
-        split="train",
-        debug=args.debug,
-        all_items=kg["item_ids"],
-        entity_max_length=args.entity_max_length,
-        n_entity=kg["num_entities"],
-    ).get_entity_co_info()
-    text_simi = text_sim(pad_entity_id=kg["pad_entity_id"]).get_entity_ts_info()
-    image_simi = image_sim(pad_entity_id=kg["pad_entity_id"]).get_entity_is_info()
+        pad_entity_id=kg["pad_entity_id"],
+    ).get_entity_ts_info()
+    image_simi = image_sim(
+        dataset_dir=args.dataset_dir,
+        dataset=args.dataset,
+        pad_entity_id=kg["pad_entity_id"],
+    ).get_entity_is_info()
     shot_len = int(len(train_dataset) * args.shot)
     train_dataset = random_split(
         train_dataset, [shot_len, len(train_dataset) - shot_len]

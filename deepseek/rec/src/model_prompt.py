@@ -3,694 +3,7 @@ import os
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torch_geometric.nn import RGCNConv, GCNConv
-from torch_geometric.nn import MessagePassing
-from torch_geometric.utils import add_self_loops, degree
-
-
-class KGPrompt(nn.Module):
-    def __init__(
-        self,
-        hidden_size,
-        token_hidden_size,
-        n_head,
-        n_layer,
-        n_block,
-        n_entity,
-        num_relations,
-        num_bases,
-        edge_index,
-        edge_type,
-        n_prefix_rec=None,
-        n_prefix_conv=None,
-    ):
-        super(KGPrompt, self).__init__()
-        self.hidden_size = hidden_size
-        self.n_head = n_head
-        self.head_dim = hidden_size // n_head
-        self.n_layer = n_layer
-        self.n_block = n_block
-        self.n_prefix_rec = n_prefix_rec
-        self.n_prefix_conv = n_prefix_conv
-
-        entity_hidden_size = hidden_size // 2
-        self.kg_encoder = RGCNConv(
-            entity_hidden_size,
-            entity_hidden_size,
-            num_relations=num_relations,
-            num_bases=num_bases,
-        )
-        self.node_embeds = nn.Parameter(torch.empty(n_entity, entity_hidden_size))
-        stdv = math.sqrt(6.0 / (self.node_embeds.size(-2) + self.node_embeds.size(-1)))
-        self.node_embeds.data.uniform_(-stdv, stdv)
-        self.edge_index = nn.Parameter(edge_index, requires_grad=False)
-        self.edge_type = nn.Parameter(edge_type, requires_grad=False)
-        self.entity_proj1 = nn.Sequential(
-            nn.Linear(entity_hidden_size, entity_hidden_size // 2),
-            nn.ReLU(),
-            nn.Linear(entity_hidden_size // 2, entity_hidden_size),
-        )
-        self.entity_proj2 = nn.Linear(entity_hidden_size, hidden_size)
-
-        self.token_proj1 = nn.Sequential(
-            nn.Linear(token_hidden_size, token_hidden_size // 2),
-            nn.ReLU(),
-            nn.Linear(token_hidden_size // 2, token_hidden_size),
-        )
-        self.token_proj2 = nn.Linear(token_hidden_size, hidden_size)
-
-        self.cross_attn = nn.Linear(hidden_size, hidden_size, bias=False)
-        self.prompt_proj1 = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_size // 2, hidden_size),
-        )
-        self.prompt_proj2 = nn.Linear(hidden_size, n_layer * n_block * hidden_size)
-
-        if self.n_prefix_rec is not None:
-            self.rec_prefix_embeds = nn.Parameter(
-                torch.empty(n_prefix_rec, hidden_size)
-            )
-            nn.init.normal_(self.rec_prefix_embeds)
-            self.rec_prefix_proj = nn.Sequential(
-                nn.Linear(hidden_size, hidden_size // 2),
-                nn.ReLU(),
-                nn.Linear(hidden_size // 2, hidden_size),
-            )
-        if self.n_prefix_conv is not None:
-            self.conv_prefix_embeds = nn.Parameter(
-                torch.empty(n_prefix_conv, hidden_size)
-            )
-            nn.init.normal_(self.conv_prefix_embeds)
-            self.conv_prefix_proj = nn.Sequential(
-                nn.Linear(hidden_size, hidden_size // 2),
-                nn.ReLU(),
-                nn.Linear(hidden_size // 2, hidden_size),
-            )
-
-    def set_and_fix_node_embed(self, node_embeds: torch.Tensor):
-        self.node_embeds.data = node_embeds
-        self.node_embeds.requires_grad_(False)
-
-    def get_entity_embeds(self):
-        node_embeds = self.node_embeds
-        entity_embeds = (
-            self.kg_encoder(node_embeds, self.edge_index, self.edge_type) + node_embeds
-        )
-        entity_embeds = self.entity_proj1(entity_embeds) + entity_embeds
-        entity_embeds = self.entity_proj2(entity_embeds)
-        return entity_embeds
-
-    def forward(
-        self,
-        entity_ids=None,
-        token_embeds=None,
-        output_entity=False,
-        use_rec_prefix=False,
-        use_conv_prefix=False,
-    ):
-        batch_size, entity_embeds, entity_len, token_len = None, None, None, None
-        if entity_ids is not None:
-            batch_size, entity_len = entity_ids.shape[:2]
-            entity_embeds = self.get_entity_embeds()
-            entity_embeds = entity_embeds[
-                entity_ids
-            ]  # (batch_size, entity_len, hidden_size)
-        if token_embeds is not None:
-            batch_size, token_len = token_embeds.shape[:2]
-            token_embeds = (
-                self.token_proj1(token_embeds) + token_embeds
-            )  # (batch_size, token_len, hidden_size)
-            token_embeds = self.token_proj2(token_embeds)
-
-        if entity_embeds is not None and token_embeds is not None:
-            attn_weights = self.cross_attn(token_embeds) @ entity_embeds.permute(
-                0, 2, 1
-            )  # (batch_size, token_len, entity_len)
-            attn_weights /= self.hidden_size
-
-            if output_entity:
-                token_weights = F.softmax(attn_weights, dim=1).permute(0, 2, 1)
-                prompt_embeds = token_weights @ token_embeds + entity_embeds
-                prompt_len = entity_len
-            else:
-                entity_weights = F.softmax(attn_weights, dim=2)
-                prompt_embeds = entity_weights @ entity_embeds + token_embeds
-                prompt_len = token_len
-        elif entity_embeds is not None:
-            prompt_embeds = entity_embeds
-            prompt_len = entity_len
-        else:
-            prompt_embeds = token_embeds
-            prompt_len = token_len
-
-        if self.n_prefix_rec is not None and use_rec_prefix:
-            prefix_embeds = (
-                self.rec_prefix_proj(self.rec_prefix_embeds) + self.rec_prefix_embeds
-            )
-            prefix_embeds = prefix_embeds.expand(prompt_embeds.shape[0], -1, -1)
-            prompt_embeds = torch.cat([prefix_embeds, prompt_embeds], dim=1)
-            prompt_len += self.n_prefix_rec
-        if self.n_prefix_conv is not None and use_conv_prefix:
-            prefix_embeds = (
-                self.conv_prefix_proj(self.conv_prefix_embeds) + self.conv_prefix_embeds
-            )
-            prefix_embeds = prefix_embeds.expand(prompt_embeds.shape[0], -1, -1)
-            prompt_embeds = torch.cat([prefix_embeds, prompt_embeds], dim=1)
-            prompt_len += self.n_prefix_conv
-
-        prompt_embeds = self.prompt_proj1(prompt_embeds) + prompt_embeds
-        prompt_embeds = self.prompt_proj2(prompt_embeds)
-        prompt_embeds = prompt_embeds.reshape(
-            batch_size,
-            prompt_len,
-            self.n_layer,
-            self.n_block,
-            self.n_head,
-            self.head_dim,
-        ).permute(
-            2, 3, 0, 4, 1, 5
-        )  # (n_layer, n_block, batch_size, n_head, prompt_len, head_dim)
-
-        return prompt_embeds
-
-    def save(self, save_dir):
-        os.makedirs(save_dir, exist_ok=True)
-        state_dict = {k: v for k, v in self.state_dict().items() if "edge" not in k}
-        save_path = os.path.join(save_dir, "model.pt")
-        torch.save(state_dict, save_path)
-
-    def load(self, load_dir):
-        load_path = os.path.join(load_dir, "model.pt")
-        missing_keys, unexpected_keys = self.load_state_dict(
-            torch.load(load_path, map_location=torch.device("cpu")), strict=False
-        )
-        print(missing_keys, unexpected_keys)
-
-
-class CustomGCNConv(MessagePassing):
-    def __init__(self):
-        super(CustomGCNConv, self).__init__(aggr="add")  # "Add" aggregation.
-
-    def forward(self, x, edge_index):
-        # 增加自环
-        edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))
-
-        # 计算节点度数
-        row, col = edge_index
-        deg = degree(col, x.size(0), dtype=x.dtype)
-        deg_inv_sqrt = deg.pow(-0.5)
-        norm = deg_inv_sqrt[row] * deg_inv_sqrt[col]
-
-        # 执行消息传递
-        return self.propagate(edge_index, x=x, norm=norm)
-
-    def message(self, x_j, norm):
-        # 消息传递（邻居信息聚合）
-        return norm.view(-1, 1) * x_j
-
-    def update(self, aggr_out):
-        # 直接返回聚合后的输出
-        return aggr_out
-
-
-class MMPrompt_inspired(nn.Module):
-    def __init__(
-        self,
-        hidden_size,
-        token_hidden_size,
-        n_head,
-        n_layer,
-        n_block,
-        n_entity,
-        num_relations,
-        num_bases,
-        edge_index,
-        edge_type,
-        edge_index_c,
-        edge_index_t_s,
-        edge_index_i_s,
-        idx_to_id,
-        n_prefix_rec=None,
-        n_prefix_conv=None,
-    ):
-        super(MMPrompt_inspired, self).__init__()
-        self.hidden_size = hidden_size
-        self.n_head = n_head
-        self.head_dim = hidden_size // n_head
-        self.n_layer = n_layer
-        self.n_block = n_block
-        self.n_prefix_rec = n_prefix_rec
-        self.n_prefix_conv = n_prefix_conv
-        self.idx_to_id = idx_to_id
-        self.idx_to_id_tensor = torch.tensor(
-            [self.idx_to_id[i] for i in range(len(self.idx_to_id))], dtype=torch.long
-        )
-        self.sorted_ids = sorted(self.idx_to_id.keys())
-        self.sorted_indices = torch.tensor(
-            [self.idx_to_id[id] for id in self.sorted_ids], dtype=torch.long
-        )
-        entity_hidden_size = hidden_size // 2
-        self.kg_encoder = RGCNConv(
-            entity_hidden_size,
-            entity_hidden_size,
-            num_relations=num_relations,
-            num_bases=num_bases,
-        )
-        self.conv_c1 = CustomGCNConv()  # LightGCN
-        self.conv_c2 = CustomGCNConv()  # LightGCN
-        self.conv_c3 = CustomGCNConv()  # LightGCN
-        self.conv_ts1 = CustomGCNConv()  # LightGCN
-        self.conv_ts2 = CustomGCNConv()  # LightGCN
-        self.conv_ts3 = CustomGCNConv()  # LightGCN
-        self.conv_is1 = CustomGCNConv()  # LightGCN
-        self.conv_is2 = CustomGCNConv()  # LightGCN
-        self.conv_is3 = CustomGCNConv()  # LightGCN
-
-        self.node_embeds = nn.Parameter(torch.empty(n_entity, entity_hidden_size))
-        stdv = math.sqrt(6.0 / (self.node_embeds.size(-2) + self.node_embeds.size(-1)))
-        self.node_embeds.data.uniform_(-stdv, stdv)
-        self.edge_index = nn.Parameter(edge_index, requires_grad=False)
-        self.edge_index_c = nn.Parameter(edge_index_c, requires_grad=False)
-        self.edge_index_t_s = nn.Parameter(edge_index_t_s, requires_grad=False)
-        self.edge_index_i_s = nn.Parameter(edge_index_i_s, requires_grad=False)
-
-        self.edge_type = nn.Parameter(edge_type, requires_grad=False)
-        self.entity_proj1 = nn.Sequential(
-            nn.Linear(entity_hidden_size, entity_hidden_size // 2),
-            nn.ReLU(),
-            nn.Linear(entity_hidden_size // 2, entity_hidden_size),
-        )
-        self.entity_proj2 = nn.Linear(entity_hidden_size, hidden_size)
-        self.token_proj1 = nn.Sequential(
-            nn.Linear(token_hidden_size, token_hidden_size // 2),
-            nn.ReLU(),
-            nn.Linear(token_hidden_size // 2, token_hidden_size),
-        )
-        self.token_proj2 = nn.Linear(token_hidden_size, hidden_size)
-        self.cross_attn = nn.Linear(hidden_size, hidden_size, bias=False)
-        self.prompt_proj1 = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_size // 2, hidden_size),
-        )
-        self.prompt_proj2 = nn.Linear(hidden_size, n_layer * n_block * hidden_size)
-        if self.n_prefix_rec is not None:
-            self.rec_prefix_embeds = nn.Parameter(
-                torch.empty(n_prefix_rec, hidden_size)
-            )
-            nn.init.normal_(self.rec_prefix_embeds)
-            self.rec_prefix_proj = nn.Sequential(
-                nn.Linear(hidden_size, hidden_size // 2),
-                nn.ReLU(),
-                nn.Linear(hidden_size // 2, hidden_size),
-            )
-        if self.n_prefix_conv is not None:
-            self.conv_prefix_embeds = nn.Parameter(
-                torch.empty(n_prefix_conv, hidden_size)
-            )
-            nn.init.normal_(self.conv_prefix_embeds)
-            self.conv_prefix_proj = nn.Sequential(
-                nn.Linear(hidden_size, hidden_size // 2),
-                nn.ReLU(),
-                nn.Linear(hidden_size // 2, hidden_size),
-            )
-
-    def set_and_fix_node_embed(self, node_embeds: torch.Tensor):
-        self.node_embeds.data = node_embeds
-        self.node_embeds.requires_grad_(False)
-
-    def get_entity_embeds(self):
-        node_embeds = self.node_embeds
-        entity_embeds = (
-            self.kg_encoder(node_embeds, self.edge_index, self.edge_type) + node_embeds
-        )
-        sorted_indices = self.sorted_indices.to(entity_embeds.device)
-        node_features = torch.index_select(entity_embeds, 0, sorted_indices)
-        movie_embeds_ts1 = self.conv_ts1(node_features, self.edge_index_t_s)
-        movie_embeds_ts2 = self.conv_ts2(movie_embeds_ts1, self.edge_index_t_s)
-        movie_embeds_ts3 = self.conv_ts3(movie_embeds_ts2, self.edge_index_t_s)
-        movie_embeds_mean_t = (movie_embeds_ts1 + movie_embeds_ts2) / 2
-
-        movie_embeds_is1 = self.conv_is1(node_features, self.edge_index_i_s)
-        movie_embeds_is2 = self.conv_is2(movie_embeds_is1, self.edge_index_i_s)
-        movie_embeds_is3 = self.conv_is3(movie_embeds_is2, self.edge_index_i_s)
-        movie_embeds_mean_i = (movie_embeds_is1 + movie_embeds_is2) / 2
-        movie_embeds_mean_t = (movie_embeds_mean_t + movie_embeds_mean_i) / 2
-
-        entity_embeds_c1 = self.conv_c1(entity_embeds, self.edge_index_c)
-        entity_embeds_c2 = self.conv_c2(entity_embeds_c1, self.edge_index_c)
-        entity_embeds_c3 = self.conv_c3(entity_embeds_c2, self.edge_index_c)
-
-        entity_embeds = (
-            entity_embeds_c1 + entity_embeds_c2 + entity_embeds_c3 + entity_embeds
-        ) / 4
-        device = movie_embeds_mean_t.device
-        idx_to_id_tensor = self.idx_to_id_tensor.to(device)
-        indices = idx_to_id_tensor[: len(movie_embeds_mean_t)]
-        entity_embeds.index_add_(0, indices, movie_embeds_mean_t)
-        entity_embeds = self.entity_proj1(entity_embeds) + entity_embeds
-        entity_embeds = self.entity_proj2(entity_embeds)
-        return entity_embeds
-
-    def forward(
-        self,
-        entity_ids=None,
-        token_embeds=None,
-        output_entity=False,
-        use_rec_prefix=False,
-        use_conv_prefix=False,
-    ):
-        batch_size, entity_embeds, entity_len, token_len = None, None, None, None
-        if entity_ids is not None:
-            batch_size, entity_len = entity_ids.shape[:2]
-            entity_embeds = self.get_entity_embeds()
-            entity_embeds = entity_embeds[entity_ids]
-        if token_embeds is not None:
-            batch_size, token_len = token_embeds.shape[:2]
-            token_embeds = self.token_proj1(token_embeds) + token_embeds
-            token_embeds = self.token_proj2(token_embeds)
-
-        if entity_embeds is not None and token_embeds is not None:
-            attn_weights = self.cross_attn(token_embeds) @ entity_embeds.permute(
-                0, 2, 1
-            )
-            attn_weights /= self.hidden_size
-
-            if output_entity:
-                token_weights = F.softmax(attn_weights, dim=1).permute(0, 2, 1)
-                prompt_embeds = token_weights @ token_embeds + entity_embeds
-                token_weights_embeds = (
-                    token_weights @ token_embeds
-                )  # 形状为 (batch_size, seq_len, num_entities)
-                token_rep = token_weights_embeds.mean(
-                    dim=1
-                )  # (batch_size, hidden_size)
-                entity_rep = entity_embeds.mean(dim=1)  # (batch_size, hidden_size)
-                temperature = 0.07
-                logits = F.cosine_similarity(
-                    token_rep.unsqueeze(1), entity_rep.unsqueeze(0), dim=-1
-                )
-                logits /= temperature
-                labels = torch.arange(
-                    logits.size(0), device=logits.device
-                )  # (batch_size,)
-                loss_cl = F.cross_entropy(logits, labels)
-                prompt_len = entity_len
-            else:
-                entity_weights = F.softmax(attn_weights, dim=2)
-                prompt_embeds = entity_weights @ entity_embeds + token_embeds
-                prompt_len = token_len
-        elif entity_embeds is not None:
-            prompt_embeds = entity_embeds
-            prompt_len = entity_len
-        else:
-            prompt_embeds = token_embeds
-            prompt_len = token_len
-
-        if self.n_prefix_rec is not None and use_rec_prefix:
-            prefix_embeds = (
-                self.rec_prefix_proj(self.rec_prefix_embeds) + self.rec_prefix_embeds
-            )
-            prefix_embeds = prefix_embeds.expand(prompt_embeds.shape[0], -1, -1)
-            prompt_embeds = torch.cat([prefix_embeds, prompt_embeds], dim=1)
-            prompt_len += self.n_prefix_rec
-        if self.n_prefix_conv is not None and use_conv_prefix:
-            prefix_embeds = (
-                self.conv_prefix_proj(self.conv_prefix_embeds) + self.conv_prefix_embeds
-            )
-            prefix_embeds = prefix_embeds.expand(prompt_embeds.shape[0], -1, -1)
-            prompt_embeds = torch.cat([prefix_embeds, prompt_embeds], dim=1)
-            prompt_len += self.n_prefix_conv
-
-        prompt_embeds = self.prompt_proj1(prompt_embeds) + prompt_embeds
-        prompt_embeds = self.prompt_proj2(prompt_embeds)
-        prompt_embeds = prompt_embeds.reshape(
-            batch_size,
-            prompt_len,
-            self.n_layer,
-            self.n_block,
-            self.n_head,
-            self.head_dim,
-        ).permute(2, 3, 0, 4, 1, 5)
-
-        return prompt_embeds, loss_cl
-
-    def save(self, save_dir):
-        os.makedirs(save_dir, exist_ok=True)
-        state_dict = {k: v for k, v in self.state_dict().items() if "edge" not in k}
-        save_path = os.path.join(save_dir, "model.pt")
-        torch.save(state_dict, save_path)
-
-    def load(self, load_dir):
-        load_path = os.path.join(load_dir, "model.pt")
-        missing_keys, unexpected_keys = self.load_state_dict(
-            torch.load(load_path, map_location=torch.device("cpu")), strict=False
-        )
-        print(missing_keys, unexpected_keys)
-
-
-class MMPrompt(nn.Module):
-    def __init__(
-        self,
-        hidden_size,
-        token_hidden_size,
-        n_head,
-        n_layer,
-        n_block,
-        n_entity,
-        num_relations,
-        num_bases,
-        edge_index,
-        edge_type,
-        edge_index_c,
-        edge_index_t_s,
-        edge_index_i_s,
-        idx_to_id,
-        n_prefix_rec=None,
-        n_prefix_conv=None,
-    ):
-        super(MMPrompt, self).__init__()
-        self.hidden_size = hidden_size
-        self.n_head = n_head
-        self.head_dim = hidden_size // n_head
-        self.n_layer = n_layer
-        self.n_block = n_block
-        self.n_prefix_rec = n_prefix_rec
-        self.n_prefix_conv = n_prefix_conv
-
-        self.idx_to_id = idx_to_id
-        self.idx_to_id_tensor = torch.tensor(
-            [self.idx_to_id[i] for i in range(len(self.idx_to_id))], dtype=torch.long
-        )
-        self.sorted_ids = sorted(self.idx_to_id.keys())
-        self.sorted_indices = torch.tensor(
-            [self.idx_to_id[id] for id in self.sorted_ids], dtype=torch.long
-        )
-
-        entity_hidden_size = hidden_size // 2
-        self.kg_encoder = RGCNConv(
-            entity_hidden_size,
-            entity_hidden_size,
-            num_relations=num_relations,
-            num_bases=num_bases,
-        )
-        self.conv_c1 = CustomGCNConv()  # LightGCN
-        self.conv_c2 = CustomGCNConv()  # LightGCN
-        self.conv_c3 = CustomGCNConv()  # LightGCN
-        self.conv_ts1 = CustomGCNConv()  # LightGCN
-        self.conv_ts2 = CustomGCNConv()  # LightGCN
-        self.conv_ts3 = CustomGCNConv()  # LightGCN
-        self.conv_is1 = CustomGCNConv()  # LightGCN
-        self.conv_is2 = CustomGCNConv()  # LightGCN
-        self.conv_is3 = CustomGCNConv()  # LightGCN
-
-        self.node_embeds = nn.Parameter(torch.empty(n_entity, entity_hidden_size))
-        stdv = math.sqrt(6.0 / (self.node_embeds.size(-2) + self.node_embeds.size(-1)))
-        self.node_embeds.data.uniform_(-stdv, stdv)
-        self.edge_index = nn.Parameter(edge_index, requires_grad=False)
-        self.edge_index_c = nn.Parameter(edge_index_c, requires_grad=False)
-        self.edge_index_t_s = nn.Parameter(edge_index_t_s, requires_grad=False)
-        self.edge_index_i_s = nn.Parameter(edge_index_i_s, requires_grad=False)
-
-        self.edge_type = nn.Parameter(edge_type, requires_grad=False)
-        self.entity_proj1 = nn.Sequential(
-            nn.Linear(entity_hidden_size, entity_hidden_size // 2),
-            nn.ReLU(),
-            nn.Linear(entity_hidden_size // 2, entity_hidden_size),
-        )
-        self.entity_proj2 = nn.Linear(entity_hidden_size, hidden_size)
-
-        self.token_proj1 = nn.Sequential(
-            nn.Linear(token_hidden_size, token_hidden_size // 2),
-            nn.ReLU(),
-            nn.Linear(token_hidden_size // 2, token_hidden_size),
-        )
-        self.token_proj2 = nn.Linear(token_hidden_size, hidden_size)
-
-        self.cross_attn = nn.Linear(hidden_size, hidden_size, bias=False)
-        self.prompt_proj1 = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_size // 2, hidden_size),
-        )
-        self.prompt_proj2 = nn.Linear(hidden_size, n_layer * n_block * hidden_size)
-
-        if self.n_prefix_rec is not None:
-            self.rec_prefix_embeds = nn.Parameter(
-                torch.empty(n_prefix_rec, hidden_size)
-            )
-            nn.init.normal_(self.rec_prefix_embeds)
-            self.rec_prefix_proj = nn.Sequential(
-                nn.Linear(hidden_size, hidden_size // 2),
-                nn.ReLU(),
-                nn.Linear(hidden_size // 2, hidden_size),
-            )
-        if self.n_prefix_conv is not None:
-            self.conv_prefix_embeds = nn.Parameter(
-                torch.empty(n_prefix_conv, hidden_size)
-            )
-            nn.init.normal_(self.conv_prefix_embeds)
-            self.conv_prefix_proj = nn.Sequential(
-                nn.Linear(hidden_size, hidden_size // 2),
-                nn.ReLU(),
-                nn.Linear(hidden_size // 2, hidden_size),
-            )
-
-    def set_and_fix_node_embed(self, node_embeds: torch.Tensor):
-        self.node_embeds.data = node_embeds
-        self.node_embeds.requires_grad_(False)
-
-    def get_entity_embeds(self):
-        node_embeds = self.node_embeds
-        entity_embeds = (
-            self.kg_encoder(node_embeds, self.edge_index, self.edge_type) + node_embeds
-        )
-        sorted_indices = self.sorted_indices.to(entity_embeds.device)
-        node_features = torch.index_select(entity_embeds, 0, sorted_indices)
-        movie_embeds_ts1 = self.conv_ts1(node_features, self.edge_index_t_s)
-        movie_embeds_ts2 = self.conv_ts2(movie_embeds_ts1, self.edge_index_t_s)
-        movie_embeds_ts3 = self.conv_ts3(movie_embeds_ts2, self.edge_index_t_s)
-        movie_embeds_mean_t = (movie_embeds_ts1 + movie_embeds_ts2) / 2
-
-        movie_embeds_is1 = self.conv_is1(node_features, self.edge_index_i_s)
-        movie_embeds_is2 = self.conv_is2(movie_embeds_is1, self.edge_index_i_s)
-        movie_embeds_is3 = self.conv_is3(movie_embeds_is2, self.edge_index_i_s)
-        movie_embeds_mean_i = (movie_embeds_is1 + movie_embeds_is2) / 2
-        movie_embeds_mean_t = (movie_embeds_mean_t + movie_embeds_mean_i) / 2
-
-        entity_embeds_c1 = self.conv_c1(node_embeds, self.edge_index_c)
-        entity_embeds_c2 = self.conv_c2(entity_embeds_c1, self.edge_index_c)
-        entity_embeds_c3 = self.conv_c3(entity_embeds_c2, self.edge_index_c)
-
-        entity_embeds = (
-            entity_embeds_c1 + entity_embeds_c2 + entity_embeds_c3 + entity_embeds
-        ) / 4
-        device = movie_embeds_mean_t.device
-        idx_to_id_tensor = self.idx_to_id_tensor.to(device)
-        indices = idx_to_id_tensor[: len(movie_embeds_mean_t)]
-        # entity_embeds.index_add_(0, indices, movie_embeds_mean_t)
-
-        entity_embeds = self.entity_proj1(entity_embeds) + entity_embeds
-        entity_embeds = self.entity_proj2(entity_embeds)
-        return entity_embeds
-
-    def forward(
-        self,
-        entity_ids=None,
-        token_embeds=None,
-        output_entity=False,
-        use_rec_prefix=False,
-        use_conv_prefix=False,
-    ):
-        batch_size, entity_embeds, entity_len, token_len = None, None, None, None
-        if entity_ids is not None:
-            batch_size, entity_len = entity_ids.shape[:2]
-            entity_embeds = self.get_entity_embeds()
-            entity_embeds = entity_embeds[entity_ids]
-        if token_embeds is not None:
-            batch_size, token_len = token_embeds.shape[:2]
-            token_embeds = self.token_proj1(token_embeds) + token_embeds
-            token_embeds = self.token_proj2(token_embeds)
-
-        if entity_embeds is not None and token_embeds is not None:
-            attn_weights = self.cross_attn(token_embeds) @ entity_embeds.permute(
-                0, 2, 1
-            )
-            attn_weights /= self.hidden_size
-
-            if output_entity:
-                token_weights = F.softmax(attn_weights, dim=1).permute(0, 2, 1)
-                prompt_embeds = token_weights @ token_embeds + entity_embeds
-
-                token_weights_embeds = (
-                    token_weights @ token_embeds
-                )  # 形状为 (batch_size, seq_len, num_entities)
-                token_rep = token_weights_embeds.mean(
-                    dim=1
-                )  # (batch_size, hidden_size)
-                entity_rep = entity_embeds.mean(dim=1)  # (batch_size, hidden_size)
-                temperature = 0.07
-                logits = F.cosine_similarity(
-                    token_rep.unsqueeze(1), entity_rep.unsqueeze(0), dim=-1
-                )
-                logits /= temperature
-                labels = torch.arange(
-                    logits.size(0), device=logits.device
-                )  # (batch_size,)
-                loss_cl = F.cross_entropy(logits, labels)
-                prompt_len = entity_len
-            else:
-                entity_weights = F.softmax(attn_weights, dim=2)
-                prompt_embeds = entity_weights @ entity_embeds + token_embeds
-                prompt_len = token_len
-        elif entity_embeds is not None:
-            prompt_embeds = entity_embeds
-            prompt_len = entity_len
-        else:
-            prompt_embeds = token_embeds
-            prompt_len = token_len
-
-        if self.n_prefix_rec is not None and use_rec_prefix:
-            prefix_embeds = (
-                self.rec_prefix_proj(self.rec_prefix_embeds) + self.rec_prefix_embeds
-            )
-            prefix_embeds = prefix_embeds.expand(prompt_embeds.shape[0], -1, -1)
-            prompt_embeds = torch.cat([prefix_embeds, prompt_embeds], dim=1)
-            prompt_len += self.n_prefix_rec
-        if self.n_prefix_conv is not None and use_conv_prefix:
-            prefix_embeds = (
-                self.conv_prefix_proj(self.conv_prefix_embeds) + self.conv_prefix_embeds
-            )
-            prefix_embeds = prefix_embeds.expand(prompt_embeds.shape[0], -1, -1)
-            prompt_embeds = torch.cat([prefix_embeds, prompt_embeds], dim=1)
-            prompt_len += self.n_prefix_conv
-
-        prompt_embeds = self.prompt_proj1(prompt_embeds) + prompt_embeds
-        prompt_embeds = self.prompt_proj2(prompt_embeds)
-        prompt_embeds = prompt_embeds.reshape(
-            batch_size,
-            prompt_len,
-            self.n_layer,
-            self.n_block,
-            self.n_head,
-            self.head_dim,
-        ).permute(2, 3, 0, 4, 1, 5)
-
-        return prompt_embeds, loss_cl
-
-    def save(self, save_dir):
-        os.makedirs(save_dir, exist_ok=True)
-        state_dict = {k: v for k, v in self.state_dict().items() if "edge" not in k}
-        save_path = os.path.join(save_dir, "model.pt")
-        torch.save(state_dict, save_path)
-
-    def load(self, load_dir):
-        load_path = os.path.join(load_dir, "model.pt")
-        missing_keys, unexpected_keys = self.load_state_dict(
-            torch.load(load_path, map_location=torch.device("cpu")), strict=False
-        )
-        print(missing_keys, unexpected_keys)
+from torch_geometric.nn import RGCNConv
 
 
 class RoutingState:
@@ -870,62 +183,42 @@ class DCMoMEPrompt(nn.Module):
         self.node_embeds.data = node_embeds
         self.node_embeds.requires_grad_(False)
 
-    def get_kg_embeds(self, entity_ids):
-        """entity_indices: [batch_size, entity_len] (tensor)"""
+    def get_entity_embeds(self):
+        # Bước 1: RGCN + residual  →  e_kg_base  (n_entity, entity_hidden_size)
         node_embeds = self.node_embeds
-        e_kg = self.kg_encoder(node_embeds, self.edge_index, self.edge_type)
-        e_kg = e_kg + node_embeds
-        e_kg = self.entity_proj1(e_kg) + e_kg  # giữ nguyên projection cũ
-        # e_kg = self.entity_proj2(e_kg)  # đưa về hidden_size
-        # kg_emb shape: [n_entity, hidden_size]
-        return e_kg[entity_ids]  # [batch_size, entity_len, hidden_size]
-
-    def get_text_embeds(self, entity_ids):
-        real_ids = self.id_to_idx_tensor[entity_ids]
-        text_embeds = self.text_embeddings[real_ids]
-        return text_embeds
-
-    def get_visual_embeds(self, entity_ids):
-        real_ids = self.id_to_idx_tensor[entity_ids]
-        image_embeds = self.image_embeddings[real_ids]
-        return image_embeds
-
-    def get_entity_embeds(self) -> torch.Tensor:
-        """
-        Trả về bảng embedding [n_entity, hidden_size] dùng làm item scoring matrix
-        cho PromptGPT2forCRS: rec_logits = hidden_state @ entity_embeds.T
-
-        - Items (id_to_idx_tensor >= 0): fuse KG + text + visual (uniform routing 1/3 mỗi)
-        - Non-items (id_to_idx_tensor == -1): chỉ dùng KG embedding
-        """
-        node_embeds = self.node_embeds
-        e_kg_all = (
+        e_kg_base = (
             self.kg_encoder(node_embeds, self.edge_index, self.edge_type) + node_embeds
         )
-        e_kg_all = (
-            self.entity_proj1(e_kg_all) + e_kg_all
-        )  # [n_entity, entity_hidden_size]
-        h_kg_all = self.kg_proj(e_kg_all)  # [n_entity, hidden_size]
+        e_kg_base = self.entity_proj1(e_kg_base) + e_kg_base  # residual MLP
 
-        entity_embeds_out = h_kg_all.clone()
+        # Bước 2: KG expert cho toàn bộ entity
+        h_kg_all = self.kg_proj(e_kg_base)  # (n_entity, hidden_size)
+        o_kg_all = self.expert_kg(h_kg_all)  # (n_entity, hidden_size)
 
-        item_mask = self.id_to_idx_tensor >= 0  # [n_entity] bool
-        item_kg_ids = torch.where(item_mask)[0]  # KG indices của items
-        item_emb_rows = self.id_to_idx_tensor[item_kg_ids]  # embedding row indices
+        # Mặc định: mọi entity đều dùng KG expert thuần
+        entity_embeds_all = o_kg_all.clone()
 
+        # Bước 3: Item entities → fuse thêm text + visual (uniform 1/3)
+        #         Uniform vì không có dialogue context tại đây
+        item_mask = self.id_to_idx_tensor >= 0
+        item_kg_ids = torch.where(item_mask)[0]  # index trong KG space
         if item_kg_ids.numel() > 0:
+            item_emb_rows = self.id_to_idx_tensor[item_kg_ids]
+
             h_txt = self.txt_proj(
                 self.text_embeddings[item_emb_rows]
-            )  # [n_items, hidden]
+            )  # (n_items, hidden)
             h_vis = self.vis_proj(
                 self.image_embeddings[item_emb_rows]
-            )  # [n_items, hidden]
-            h_kg = h_kg_all[item_kg_ids]  # [n_items, hidden]
-            # Uniform routing (1/3) vì không có dialogue context
-            fused = (h_kg + h_txt + h_vis) / 3.0
-            entity_embeds_out[item_kg_ids] = fused
+            )  # (n_items, hidden)
+            o_txt = self.expert_txt(h_txt)
+            o_vis = self.expert_vis(h_vis)
 
-        return entity_embeds_out  # [n_entity, hidden_size]
+            entity_embeds_all[item_kg_ids] = (
+                o_kg_all[item_kg_ids] + o_txt + o_vis
+            ) / 3.0
+
+        return entity_embeds_all, e_kg_base
 
     @staticmethod
     def compute_topic_shift(
@@ -1024,48 +317,53 @@ class DCMoMEPrompt(nn.Module):
                        False => cho generation (token attend to entity)
         """
         batch_size, entity_embeds, entity_len, token_len = None, None, None, None
+        loss_lb = torch.tensor(0.0, device=self.node_embeds.device)
+        loss_cl = torch.tensor(0.0, device=self.node_embeds.device)
+
+        entity_embeds_all, e_kg_base = self.get_entity_embeds()
+
         if state is None:
             state = RoutingState(batch_size, entity_len)
 
         if entity_ids is not None:
             batch_size, entity_len = entity_ids.shape[:2]
-            e_kg = self.get_kg_embeds(entity_ids=entity_ids)
-            e_txt = self.get_text_embeds(entity_ids=entity_ids)
-            e_vis = self.get_visual_embeds(entity_ids=entity_ids)
+            e_kg = e_kg_base[entity_ids]
 
+            # 2b. Project từng modality lên hidden_size
+            h_kg = self.kg_proj(e_kg)  # (B, L, hidden)
+            real_ids = self.id_to_idx_tensor[entity_ids]  # (B, L)
+            h_txt = self.txt_proj(self.text_embeddings[real_ids])  # (B, L, hidden)
+            h_vis = self.vis_proj(self.image_embeddings[real_ids])  # (B, L, hidden)
+
+            # 2c. Qua từng expert
+            o_kg = self.expert_kg(h_kg)
+            o_txt = self.expert_txt(h_txt)
+            o_vis = self.expert_vis(h_vis)
+            experts = torch.stack([o_kg, o_txt, o_vis], dim=2)  # (B, L, 3, hidden)
+
+            # 2d. Dialogue-conditioned routing + drift gate
+            if state is None:
+                state = RoutingState()
+            d_t = (
+                token_embeds.mean(dim=1)
+                if token_embeds is not None
+                else torch.zeros(
+                    batch_size, self.hidden_size, device=self.node_embeds.device
+                )
+            )
+            routing_emb = dialogue_emb if dialogue_emb is not None else d_t
+
+            g_hat, g = self._compute_routing(h_kg, h_txt, h_vis, routing_emb, state)
+            entity_embeds = (g_hat.unsqueeze(-1) * experts).sum(dim=2)  # (B, L, hidden)
+
+            # 2e. Load Balancing Loss (Switch Transformer)
+            P_k = g.mean(dim=[0, 1])
+            f_k = (g == g.max(dim=-1, keepdim=True).values).float().mean(dim=[0, 1])
+            loss_lb = 3 * (f_k * P_k).sum()
         if token_embeds is not None:
             batch_size, token_len = token_embeds.shape[:2]
             token_embeds = self.token_proj1(token_embeds) + token_embeds
             token_embeds = self.token_proj2(token_embeds)
-            d_t = token_embeds.mean(dim=1)  # (batch, hidden)
-        else:
-            d_t = torch.zeros(
-                batch_size, self.hidden_size, device=next(self.parameters()).device
-            )
-        routing_emb = dialogue_emb if dialogue_emb is not None else d_t  # [B, hidden]
-
-        h_kg = self.kg_proj(e_kg)
-        h_txt = self.txt_proj(e_txt)
-        h_vis = self.vis_proj(e_vis)
-
-        o_kg = self.expert_kg(h_kg)  # expert outputs
-        o_txt = self.expert_txt(h_txt)
-        o_vis = self.expert_vis(h_vis)
-        experts = torch.stack([o_kg, o_txt, o_vis], dim=2)
-
-        g_hat, momentum, g = self.compute_routing(
-            h_kg, h_txt, h_vis, routing_emb, state
-        )
-        entity_embeds = (g_hat.unsqueeze(-1) * experts).sum(dim=2)  # [B, L, hidden]
-
-        # ===== Load Balancing Loss (báo cáo §6, Eq. 22) =====
-        # L_lb = N_experts × Σ_k f_k × P_k  (Shazeer et al. 2017 / Switch Transformer)
-        # Dùng soft routing probabilities g (trước drift) để giữ differentiability
-        # FIX 11: tính loss_lb và lưu để trả về
-        num_experts = 3
-        P_k = g.mean(dim=[0, 1])  # [3] — avg routing prob cho mỗi expert
-        f_k = (g == g.max(dim=-1, keepdim=True).values).float().mean(dim=[0, 1])  # [3]
-        loss_lb = num_experts * (f_k * P_k).sum()
 
         # Cross attn
         if entity_embeds is not None and token_embeds is not None:

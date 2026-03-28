@@ -425,7 +425,7 @@ if __name__ == "__main__":
                 model(**batch["context"], rec=True).rec_loss
                 / args.gradient_accumulation_steps
             )
-            loss = loss + loss_cl * 0.0001 + loss_lb * 0.01
+            loss = loss + loss_cl * 0.001 + loss_lb * 0.001
             accelerator.backward(loss)
             train_loss.append(float(loss))
 

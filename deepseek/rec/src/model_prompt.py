@@ -430,7 +430,7 @@ class DCMoMEPrompt(nn.Module):
             self.head_dim,
         ).permute(2, 3, 0, 4, 1, 5)
 
-        return prompt_embeds, loss_cl, loss_lb
+        return prompt_embeds, loss_cl, loss_lb, entity_embeds_all
 
     def save(self, save_dir):
         os.makedirs(save_dir, exist_ok=True)

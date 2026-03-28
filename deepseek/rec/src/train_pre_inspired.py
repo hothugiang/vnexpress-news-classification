@@ -140,7 +140,7 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     config = vars(args)
-    accelerator = Accelerator()
+    accelerator = Accelerator(kwargs_handlers=[{"find_unused_parameters": True}])
     device = accelerator.device
     local_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     logger.remove()

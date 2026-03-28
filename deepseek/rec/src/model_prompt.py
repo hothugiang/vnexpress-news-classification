@@ -353,7 +353,7 @@ class DCMoMEPrompt(nn.Module):
             )
             routing_emb = dialogue_emb if dialogue_emb is not None else d_t
 
-            g_hat, g = self.compute_routing(h_kg, h_txt, h_vis, routing_emb, state)
+            g_hat, _, g = self.compute_routing(h_kg, h_txt, h_vis, routing_emb, state)
             entity_embeds = (g_hat.unsqueeze(-1) * experts).sum(dim=2)  # (B, L, hidden)
 
             # 2e. Load Balancing Loss (Switch Transformer)

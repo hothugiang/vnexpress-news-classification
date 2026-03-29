@@ -126,7 +126,9 @@ def parse_args():
     parser.add_argument(
         "--entity", type=str, help="wandb username", default="longvh-research-vnu"
     )
-    parser.add_argument("--project", type=str, help="wandb exp project", default="MCRS")
+    parser.add_argument(
+        "--project", type=str, help="wandb exp project", default="pretrain"
+    )
     parser.add_argument("--name", type=str, help="wandb exp name")
     parser.add_argument(
         "--log_all",

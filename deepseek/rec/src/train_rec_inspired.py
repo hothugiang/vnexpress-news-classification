@@ -23,7 +23,7 @@ from dataset_dbpedia_inspired import DBpedia, Co_occurrence, text_sim, image_sim
 from dataset_rec import CRSRecDataset, CRSRecDataCollator
 from evaluate_rec import RecEvaluator
 from model_gpt2 import PromptGPT2forCRS
-from model_prompt import DCMoMEPrompt
+from model_prompt import DCMoMEPrompt, RoutingState
 
 
 def parse_args():
@@ -148,6 +148,33 @@ def parse_args():
     return args
 
 
+def multilabel_rec_loss(
+    rec_logits: torch.Tensor,  # [B_active, n_entity]
+    rec_labels: list[list[int]],  # length = B_active (đã slice theo active_idx)
+    device,
+) -> torch.Tensor:
+    """
+    Mean CE over tất cả (sample, item) pairs.
+
+    rec_labels[i] là List[int] — các items hợp lệ tại turn i.
+    rec_logits dùng full entity space (không filter) để CE có đủ negatives.
+    """
+    total_loss = torch.tensor(0.0, device=device)
+    n_samples = 0
+
+    for i, items in enumerate(rec_labels):
+        if not items:
+            continue
+        item_tensor = torch.tensor(items, dtype=torch.long, device=device)  # [k]
+        logit_row = rec_logits[i].unsqueeze(0).expand(len(items), -1)  # [k, n_entity]
+        total_loss = total_loss + torch.nn.functional.cross_entropy(
+            logit_row, item_tensor
+        )
+        n_samples += 1
+
+    return total_loss / n_samples if n_samples > 0 else total_loss
+
+
 if __name__ == "__main__":
     args = parse_args()
     config = vars(args)
@@ -212,11 +239,13 @@ if __name__ == "__main__":
     model.resize_token_embeddings(len(tokenizer))
     model.config.pad_token_id = tokenizer.pad_token_id
     model = model.to(device)
+
     text_tokenizer = AutoTokenizer.from_pretrained(args.text_tokenizer)
     text_tokenizer.add_special_tokens(prompt_special_tokens_dict)
     text_encoder = AutoModel.from_pretrained(args.text_encoder)
     text_encoder.resize_token_embeddings(len(text_tokenizer))
     text_encoder = text_encoder.to(device)
+
     train_dataset = CRSRecDataset(
         dataset_dir=args.dataset_dir,
         dataset=args.dataset,
@@ -416,26 +445,72 @@ if __name__ == "__main__":
     for epoch in range(args.num_train_epochs):
         train_loss = []
         prompt_encoder.train()
-        for step, batch in enumerate(train_dataloader):
-            with torch.no_grad():
-                token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-            prompt_embeds, loss_cl, loss_lb, entity_embeds_all = prompt_encoder(
-                entity_ids=batch["entity"],
-                token_embeds=token_embeds,
-                output_entity=True,
-                use_rec_prefix=True,
-            )
-            batch["context"]["prompt_embeds"] = prompt_embeds
-            batch["context"]["entity_embeds"] = entity_embeds_all
-            loss = (
-                model(**batch["context"], rec=True).rec_loss
-                / args.gradient_accumulation_steps
-            )
-            loss = loss + loss_cl * 0.001 + loss_lb * 0.001
-            accelerator.backward(loss)
-            train_loss.append(float(loss))
+        for step, turn_batchs in enumerate(train_dataloader):
+            state = RoutingState()
 
-            # optim step
+            conv_loss = torch.tensor(0.0, device=device)
+            loss_cl_acc = torch.tensor(0.0, device=device)
+            loss_lb_acc = torch.tensor(0.0, device=device)
+            n_rec_turns = 0
+
+            for batch in turn_batchs:
+                has_rec = batch["has_rec"]
+                valid_mask = batch["valid_mask"]
+
+                with torch.no_grad():
+                    token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
+                prompt_embeds, loss_cl, loss_lb, entity_embeds_all = prompt_encoder(
+                    entity_ids=batch["entity"],
+                    token_embeds=token_embeds,
+                    state=state,
+                    output_entity=True,
+                    use_rec_prefix=True,
+                )
+
+                active_rec = has_rec & valid_mask
+                if not active_rec.any():
+                    continue
+
+                active_idx = active_rec.nonzero(as_tuple=True)[0]
+                active_list = active_idx.tolist()
+                sub_context = {
+                    k: v[active_idx]
+                    if isinstance(v, torch.Tensor)
+                    else [v[i] for i in active_list]
+                    for k, v in batch["context"].items()
+                    if k != "rec_labels"
+                }
+                sub_context["prompt_embeds"] = prompt_embeds[:, :, active_idx]
+                sub_context["entity_embeds"] = entity_embeds_all
+                rec_logits = model(**sub_context, rec=True).rec_logits
+
+                # Slice rec_labels tương ứng với active samples
+                active_rec_labels = [batch["rec_labels"][i] for i in active_list]
+
+                rec_loss = multilabel_rec_loss(rec_logits, active_rec_labels, device)
+                conv_loss = conv_loss + rec_loss
+                loss_cl_acc = loss_cl_acc + loss_cl
+                loss_lb_acc = loss_lb_acc + loss_lb
+                n_rec_turns += 1
+                # batch["context"]["prompt_embeds"] = prompt_embeds
+                # batch["context"]["entity_embeds"] = entity_embeds_all
+                # loss = (
+                #     model(**batch["context"], rec=True).rec_loss
+                #     / args.gradient_accumulation_steps
+                # )
+                # loss = loss + loss_cl * 0.001 + loss_lb * 0.001
+            total_loss = (
+                conv_loss / n_rec_turns
+                + 0.001 * loss_cl_acc / n_rec_turns
+                + 0.001 * loss_lb_acc / n_rec_turns
+            ) / args.gradient_accumulation_steps
+
+            accelerator.backward(total_loss)
+            train_loss.append(float(total_loss))
+
+            if n_rec_turns == 0:
+                continue
+                # optim step
             if (
                 step % args.gradient_accumulation_steps == 0
                 or step == len(train_dataloader) - 1
@@ -467,28 +542,69 @@ if __name__ == "__main__":
         # valid
         valid_loss = []
         prompt_encoder.eval()
-        for batch in tqdm(valid_dataloader):
-            with torch.no_grad():
-                token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-                prompt_embeds, loss_cl, loss_lb, entity_embeds_all = prompt_encoder(
-                    entity_ids=batch["entity"],
-                    token_embeds=token_embeds,
-                    output_entity=True,
-                    use_rec_prefix=True,
-                )
-                batch["context"]["prompt_embeds"] = prompt_embeds
-                batch["context"]["entity_embeds"] = entity_embeds_all
+        for turn_batches in tqdm(valid_dataloader):
+            state = RoutingState()
+            for batch in turn_batches:
+                has_rec = batch["has_rec"]
+                valid_mask = batch["valid_mask"]
+                with torch.no_grad():
+                    token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
+                    prompt_embeds, loss_cl, loss_lb, entity_embeds_all = prompt_encoder(
+                        entity_ids=batch["entity"],
+                        token_embeds=token_embeds,
+                        state=state,
+                        output_entity=True,
+                        use_rec_prefix=True,
+                    )
 
-                outputs = model(**batch["context"], rec=True)
-                valid_loss.append(float(outputs.rec_loss))
-                logits = outputs.rec_logits[:, kg["item_ids"]]
-                ranks = torch.topk(logits, k=50, dim=-1).indices.tolist()
-                ranks = [
-                    [kg["item_ids"][rank] for rank in batch_rank]
-                    for batch_rank in ranks
-                ]
-                labels = batch["context"]["rec_labels"]
-                evaluator.evaluate(ranks, labels)
+                    active_rec = has_rec & valid_mask
+                    if not active_rec.any():
+                        continue
+
+                    active_idx = active_rec.nonzero(as_tuple=True)[0]
+                    active_list = active_idx.tolist()
+
+                    sub_context = {
+                        k: v[active_idx]
+                        if isinstance(v, torch.Tensor)
+                        else [v[i] for i in active_list]
+                        for k, v in batch["context"].items()
+                        if k != "rec_labels"
+                    }
+                    outputs = model(**sub_context, rec=True)
+                    rec_logits = outputs.rec_logits
+
+                    sub_context["prompt_embeds"] = prompt_embeds[:, :, active_idx]
+                    sub_context["entity_embeds"] = entity_embeds_all
+
+                    # ---- Loss (dùng full multi-label list) ----
+                    active_rec_labels = [batch["rec_labels"][i] for i in active_list]
+                    loss = multilabel_rec_loss(rec_logits, active_rec_labels, device)
+                    valid_loss.append(float(loss))
+
+                    # ---- Ranking + Evaluate: y hệt baseline ----
+                    # context["rec_labels"] là flat List[int] (single item per sample)
+                    # → evaluator.evaluate(ranks, labels) nhất quán hoàn toàn
+                    item_logits = rec_logits[:, kg["item_ids"]]
+                    ranks = torch.topk(item_logits, k=50, dim=-1).indices.tolist()
+                    ranks = [
+                        [kg["item_ids"][r] for r in batch_rank] for batch_rank in ranks
+                    ]
+                    labels = [batch["context"]["rec_labels"][i] for i in active_list]
+                    evaluator.evaluate(ranks, labels)
+                    # batch["context"]["prompt_embeds"] = prompt_embeds
+                    # batch["context"]["entity_embeds"] = entity_embeds_all
+
+                    # outputs = model(**batch["context"], rec=True)
+                    # valid_loss.append(float(outputs.rec_loss))
+                    # logits = outputs.rec_logits[:, kg["item_ids"]]
+                    # ranks = torch.topk(logits, k=50, dim=-1).indices.tolist()
+                    # ranks = [
+                    #     [kg["item_ids"][rank] for rank in batch_rank]
+                    #     for batch_rank in ranks
+                    # ]
+                    # labels = batch["context"]["rec_labels"]
+                    # evaluator.evaluate(ranks, labels)
 
         # metric
         report = accelerator.gather(evaluator.report())
@@ -515,26 +631,66 @@ if __name__ == "__main__":
         test_loss = []
         prompt_encoder.eval()
         for batch in tqdm(test_dataloader):
-            with torch.no_grad():
-                token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-                prompt_embeds, loss_cl, loss_lb, entity_embeds_all = prompt_encoder(
-                    entity_ids=batch["entity"],
-                    token_embeds=token_embeds,
-                    output_entity=True,
-                    use_rec_prefix=True,
-                )
-                batch["context"]["prompt_embeds"] = prompt_embeds
-                batch["context"]["entity_embeds"] = entity_embeds_all
-                outputs = model(**batch["context"], rec=True)
-                test_loss.append(float(outputs.rec_loss))
-                logits = outputs.rec_logits[:, kg["item_ids"]]
-                ranks = torch.topk(logits, k=50, dim=-1).indices.tolist()
-                ranks = [
-                    [kg["item_ids"][rank] for rank in batch_rank]
-                    for batch_rank in ranks
-                ]
-                labels = batch["context"]["rec_labels"]
-                evaluator.evaluate(ranks, labels)
+            state = RoutingState()
+            for batch in turn_batches:
+                has_rec = batch["has_rec"]
+                valid_mask = batch["valid_mask"]
+                with torch.no_grad():
+                    token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
+                    prompt_embeds, loss_cl, loss_lb, entity_embeds_all = prompt_encoder(
+                        entity_ids=batch["entity"],
+                        token_embeds=token_embeds,
+                        state=state,
+                        output_entity=True,
+                        use_rec_prefix=True,
+                    )
+                    active_rec = has_rec & valid_mask
+                    if not active_rec.any():
+                        continue
+
+                    active_idx = active_rec.nonzero(as_tuple=True)[0]
+                    active_list = active_idx.tolist()
+
+                    sub_context = {
+                        k: v[active_idx]
+                        if isinstance(v, torch.Tensor)
+                        else [v[i] for i in active_list]
+                        for k, v in batch["context"].items()
+                        if k != "rec_labels"
+                    }
+                    outputs = model(**sub_context, rec=True)
+                    rec_logits = outputs.rec_logits
+
+                    sub_context["prompt_embeds"] = prompt_embeds[:, :, active_idx]
+                    sub_context["entity_embeds"] = entity_embeds_all
+
+                    # ---- Loss (dùng full multi-label list) ----
+                    active_rec_labels = [batch["rec_labels"][i] for i in active_list]
+                    loss = multilabel_rec_loss(rec_logits, active_rec_labels, device)
+                    test_loss.append(float(loss))
+
+                    # ---- Ranking + Evaluate: y hệt baseline ----
+                    # context["rec_labels"] là flat List[int] (single item per sample)
+                    # → evaluator.evaluate(ranks, labels) nhất quán hoàn toàn
+                    item_logits = rec_logits[:, kg["item_ids"]]
+                    ranks = torch.topk(item_logits, k=50, dim=-1).indices.tolist()
+                    ranks = [
+                        [kg["item_ids"][r] for r in batch_rank] for batch_rank in ranks
+                    ]
+                    labels = [batch["context"]["rec_labels"][i] for i in active_list]
+                    evaluator.evaluate(ranks, labels)
+                    # batch["context"]["prompt_embeds"] = prompt_embeds
+                    # batch["context"]["entity_embeds"] = entity_embeds_all
+                    # outputs = model(**batch["context"], rec=True)
+                    # test_loss.append(float(outputs.rec_loss))
+                    # logits = outputs.rec_logits[:, kg["item_ids"]]
+                    # ranks = torch.topk(logits, k=50, dim=-1).indices.tolist()
+                    # ranks = [
+                    #     [kg["item_ids"][rank] for rank in batch_rank]
+                    #     for batch_rank in ranks
+                    # ]
+                    # labels = batch["context"]["rec_labels"]
+                    # evaluator.evaluate(ranks, labels)
         # metric
         report = accelerator.gather(evaluator.report())
         for k, v in report.items():

@@ -151,7 +151,13 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     config = vars(args)
-    accelerator = Accelerator(device_placement=False)
+    from accelerate.utils import DistributedDataParallelKwargs
+
+    # Tạo kwargs handler cho DDP
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+
+    # Khởi tạo accelerator với handler
+    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
     device = accelerator.device
     local_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     logger.remove()

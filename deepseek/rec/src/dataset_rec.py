@@ -1,15 +1,15 @@
 """
-dataset_rec_conv.py
-====================
-Conversation-aware version of CRSRecDataset.
+dataset_rec_conv.py  (multi-label version)
+===========================================
+Conversation-aware dataset cho recommendation training.
 
-Thay vì coi mỗi dòng JSONL là 1 sample độc lập, class này:
-  1. Nhóm tất cả turn của cùng conv_id lại thành 1 conversation
-  2. Sort theo turn_pos (len(context)) để đảm bảo thứ tự thời gian
-  3. Trả ra 1 sample = 1 full conversation (list of turn dicts)
-
-→ Training loop có thể duyệt turn-by-turn và duy trì RoutingState
-  liên tục qua các lượt hội thoại, cho phép cơ chế momentum drift hoạt động.
+Thiết kế cốt lõi:
+  - Mỗi sample = 1 full conversation (list[turn_dict])
+  - 1 turn_pos = 1 turn_dict DUY NHẤT, dù có nhiều rec items
+    → "rec" là List[int], KHÔNG expand thành nhiều samples
+  - RoutingState cập nhật đúng 1 lần per time-step thực
+  - Loss = mean CE over tất cả rec items của turn
+  - Evaluation: any-hit — đúng nếu BẤT KỲ item nào trong top-K
 """
 
 import json
@@ -176,13 +176,13 @@ class CRSRecConvDataCollator:
         "context"    : dict   — tokenizer-padded, shape [B, seq_len]
         "prompt"     : dict   — tokenizer-padded, shape [B, prompt_len]
         "entity"     : Tensor — padded, shape     [B, entity_len]
-        "rec_labels" : List[int]  — first rec item per sample (-1 nếu không có)
+        "rec_labels" : List[List[int]] — rec items per sample ([] nếu không có)
         "valid_mask" : BoolTensor [B] — True nếu conversation còn active ở turn t
         "has_rec"    : BoolTensor [B] — True nếu sample có rec label tại turn t
     }
 
-    Conversation ngắn hơn max_turns được "pad" bằng cách lặp lại turn cuối cùng
-    (harmless vì valid_mask=False → loss bị mask, state update lặp lại giá trị cũ).
+    rec_labels[i] là List[int] → training loop tính mean CE,
+    evaluation loop dùng any-hit.
     """
 
     def __init__(
@@ -221,9 +221,12 @@ class CRSRecConvDataCollator:
         ctx_batch = defaultdict(list)
         pmt_batch = defaultdict(list)
         ent_batch = []
-        # Lấy rec item đầu tiên làm label (nhất quán với CRSRecDataset gốc).
-        # Nếu không có rec thì dùng -1 (sẽ bị masked bởi has_rec).
-        rec_labels = [t["rec"][0] if t["rec"] else -1 for t in turn_list]
+
+        # rec_labels_full : List[List[int]] — dùng cho multilabel loss trong train
+        # rec_labels_flat : List[int]       — dùng cho eval/metric, nhất quán baseline
+        #                                     (-1 nếu turn không có rec)
+        rec_labels_full = [t["rec"] for t in turn_list]
+        rec_labels_flat = [t["rec"][0] if t["rec"] else -1 for t in turn_list]
 
         for t in turn_list:
             ctx_batch["input_ids"].append(t["context"])
@@ -236,7 +239,7 @@ class CRSRecConvDataCollator:
             max_length=self.context_max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
         )
-        ctx_out["rec_labels"] = rec_labels
+        ctx_out["rec_labels"] = rec_labels_flat
         for k, v in ctx_out.items():
             if not isinstance(v, torch.Tensor):
                 ctx_out[k] = torch.as_tensor(v, device=self.device)
@@ -257,7 +260,7 @@ class CRSRecConvDataCollator:
             pad_tail=True,
             device=self.device,
         )
-        return ctx_out, pmt_out, ent_tensor, rec_labels
+        return ctx_out, pmt_out, ent_tensor, rec_labels_full
 
     # ------------------------------------------------------------------
     # __call__
@@ -288,11 +291,11 @@ class CRSRecConvDataCollator:
                     # bị corrupt vì input giống turn trước (routing ổn định).
                     turns_at_t.append(conv[-1])
 
-            ctx, pmt, ent, rec_labels = self._collate_turns(turns_at_t)
+            ctx, pmt, ent, rec_labels_full = self._collate_turns(turns_at_t)
 
             # has_rec: conversation còn active VÀ có rec label tại turn t
             has_rec = torch.tensor(
-                [valid_mask[i].item() and rec_labels[i] != -1 for i in range(B)],
+                [valid_mask[i].item() and rec_labels_full[i] > 0 for i in range(B)],
                 dtype=torch.bool,
                 device=self.device,
             )
@@ -302,7 +305,7 @@ class CRSRecConvDataCollator:
                     "context": ctx,
                     "prompt": pmt,
                     "entity": ent,
-                    "rec_labels": rec_labels,  # List[int], length B
+                    "rec_labels": rec_labels_full,  # List[int], length B
                     "valid_mask": valid_mask,  # [B] — active conversations
                     "has_rec": has_rec,  # [B] — có rec label tại t
                 }
@@ -319,10 +322,8 @@ if __name__ == "__main__":
     from transformers import AutoTokenizer
     from config import gpt2_special_tokens_dict, prompt_special_tokens_dict
 
-    debug = True
-    device = torch.device("cpu")
-    dataset = "inspired"
-    dataset_dir = "rec_data"
+    debug, device = True, torch.device("cpu")
+    dataset_dir, dataset = "rec_data", "inspired"
 
     tokenizer = AutoTokenizer.from_pretrained("models/DialoGPT-small")
     tokenizer.add_special_tokens(gpt2_special_tokens_dict)
@@ -337,21 +338,15 @@ if __name__ == "__main__":
         debug=debug,
         prompt_tokenizer=prompt_tokenizer,
     )
-    print(f"Total conversations: {len(ds)}")
-    conv0 = ds[0]
-    print(f"Conversation 0 has {len(conv0)} turns")
-    for i, t in enumerate(conv0):
-        print(
-            f"  turn {i}: entity={t['entity']}, rec={t['rec']}, "
-            f"ctx_len={len(t['context'])}"
-        )
+    print(f"Conversations: {len(ds)}")
+    for i, t in enumerate(ds[0]):
+        print(f"  turn {i:2d} | rec={t['rec']} | n_entity={len(t['entity'])}")
 
     from dataset_dbpedia_inspired import DBpedia
 
     kg = DBpedia(
         dataset_dir=dataset_dir, dataset=dataset, debug=debug
     ).get_entity_kg_info()
-
     collator = CRSRecConvDataCollator(
         tokenizer=tokenizer,
         device=device,
@@ -360,12 +355,9 @@ if __name__ == "__main__":
     )
     loader = DataLoader(ds, batch_size=2, collate_fn=collator)
     for turn_batches in loader:
-        print(f"\nBatch has {len(turn_batches)} turns")
         for t, tb in enumerate(turn_batches):
             print(
-                f"  turn {t}: ctx={tb['context']['input_ids'].shape}, "
-                f"ent={tb['entity'].shape}, "
-                f"valid={tb['valid_mask'].tolist()}, "
-                f"has_rec={tb['has_rec'].tolist()}"
+                f"t={t} | ent={tb['entity'].shape} | "
+                f"has_rec={tb['has_rec'].tolist()} | rec={tb['rec_labels']}"
             )
         break

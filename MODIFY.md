@@ -1,333 +1,46 @@
-Đây là **Problem Formulation + Model Architecture**
-
-* ✅ Train được trực tiếp từ dataset Redial/Inspired
-* ✅ Không giả định field ẩn
-
----
-
-# 1. Problem Formulation
-
-## 1.1 Notation
-
-Cho một tập hội thoại:
-
-[
-\mathcal{D} = { (C^{(n)}, E^{(n)}, y^{(n)}) }_{n=1}^{N}
-]
-
-Trong đó:
-
-* (C = {u_1, ..., u_T}): chuỗi utterance (`context`)
-* (E = {e_1, ..., e_k}): tập entity trong hội thoại (`entity`)
-* (y \in \mathcal{I}): item được recommend (`rec`)
-* (\mathcal{I}): tập item
-
----
-
-## 1.2 Conversational Recommendation (Standard)
-
-Các mô hình như MSCRS học:
-
-[
-\max_\theta P(y \mid C, E)
-]
-
-Thông qua:
-
-[
-\hat{y} = f_\theta(C, E)
-]
-
----
-
-## 1.3 Confounding in Conversational Recommendation
-
-Trong thực tế tồn tại popularity bias:
-
-[
-Z = popularity(y)
-]
-
-Cấu trúc phụ thuộc thực tế:
-
-[
-P \rightarrow C
-]
-
-[
-P \rightarrow y
-]
-
-[
-Z \rightarrow y
-]
-
-Do đó:
-
-[
-P(y \mid C, E) \neq P(y \mid do(P))
-]
-
----
-
-## 1.4 Reformulated Objective (CDH-CRS)
-
-Ta định nghĩa latent preference representation:
-
-[
-z = g_\theta(C, E)
-]
-
-và tách:
-
-[
-z = z_{inv} + z_{spur}
-]
-
-Trong đó:
-
-* (z_{inv}): preference invariant
-* (z_{spur}): popularity-correlated component
-
-Mục tiêu:
-
-[
-\max_\theta P(y \mid z_{inv})
-]
-
-đồng thời giảm phụ thuộc vào popularity.
-
----
-
-# 2. Hypergraph-based Preference Modeling
-
-## 2.1 Hypergraph Definition
-
-Ta xây hypergraph:
-
-[
-\mathcal{H} = (V, \mathcal{E})
-]
-
-* (V = \mathcal{E}_{entity} \cup \mathcal{I})
-* (\mathcal{E}): tập hyperedge
-
----
-
-## 2.2 Hyperedge Construction
-
-Với mỗi conversation n:
-
-[
-e^{(n)} =
-{ e_1, e_2, ..., e_k }
-]
-
-Tức là:
-
-> tất cả entity trong cùng một dialogue tạo thành một hyperedge.
-
-Không cần thêm annotation.
-
----
-
-## 2.3 Hypergraph Propagation
-
-Cho:
-
-* (X \in \mathbb{R}^{|V| \times d}): node embedding
-* (H \in \mathbb{R}^{|V| \times |\mathcal{E}|}): incidence matrix
-
-Update:
-
-[
-X' =
-\sigma
-\left(
-D_v^{-1}
-H
-W_e
-D_e^{-1}
-H^T
-X
-W_v
-\right)
-]
-
-Trong đó:
-
-* (D_v): node degree matrix
-* (D_e): hyperedge degree matrix
-
----
-
-# 3. Model Architecture
-
-## 3.1 Overview
-
-```id="arch1"
-Dialogue Encoder
-        ↓
-Entity Embedding Lookup
-        ↓
-Hypergraph Encoder
-        ↓
-Preference Aggregation
-        ↓
-Disentangled Projection
-        ↓
-Causal-aware Prediction
-```
-
----
-
-# 3.2 Dialogue Encoder
-
-Encode context:
-
-[
-h_C = Encoder(C)
-]
-
-[
-h_C \in \mathbb{R}^d
-]
-
----
-
-# 3.3 Entity-aware Hypergraph Encoder
-
-Lấy embedding entity:
-
-[
-v_{e_i} = Emb(e_i)
-]
-
-Sau hypergraph propagation:
-
-[
-v_{e_i}' = HypergraphConv(v_{e_i})
-]
-
-Aggregate entity preference:
-
-[
-h_E = \frac{1}{k} \sum_{i=1}^{k} v_{e_i}'
-]
-
----
-
-# 3.4 Preference Representation
-
-Kết hợp dialogue và entity:
-
-[
-z = W_c h_C + W_e h_E
-]
-
----
-
-# 4. Disentangled Preference Learning
-
-Projection:
-
-[
-z_{inv} = W_{inv} z
-]
-
-[
-z_{spur} = W_{spur} z
-]
-
-Orthogonality constraint:
-
-[
-L_{orth} =
-\left|
-z_{inv}^T z_{spur}
-\right|_2
-]
-
----
-
-# 5. Causal-aware Recommendation Head
-
-Prediction chỉ dùng invariant component:
-
-[
-\hat{y} =
-softmax( W_r z_{inv} )
-]
-
----
-
-# 6. Popularity Debiased Objective
-
-Tính popularity:
-
-[
-pop(y) =
-\frac{# interactions(y)}
-{\max_j # interactions(j)}
-]
-
-Weighted recommendation loss:
-
-[
-L_{rec} =
----------
-
-\sum
-\frac{1}{pop(y)^\gamma}
-\log P(y \mid z_{inv})
-]
-
----
-
-# 7. Invariant Regularization
-
-Chia batch theo popularity quantile thành K nhóm.
-
-Loss invariant:
-
-[
-L_{inv} =
-\sum_{k=1}^{K}
-|
-\nabla_{w|z_{inv}}
-L_k
-|^2
-]
-
----
-
-# 8. Final Objective
-
-[
-L =
-L_{rec}
-+
-\lambda_1 L_{orth}
-+
-\lambda_2 L_{inv}
-]
-
----
-
-# 9. Sự khác biệt cốt lõi so với MSCRS
-
-| MSCRS                  | CDH-CRS                 |
-| ---------------------- | ----------------------- |
-| Pairwise graph         | Hypergraph              |
-| Correlation prediction | Invariant prediction    |
-| Entangled embedding    | Disentangled            |
-| No debias              | Popularity intervention |
-
----
-
-# 10. Conceptual Contribution
-
-1. Preference modeling unit chuyển từ pairwise entity → compositional hyperedge.
-2. Prediction dựa trên invariant representation.
-3. Popularity bias được xử lý qua interventional reweighting.
-4. Không cần thêm annotation ngoài dataset gốc.
+# KNOWLEDGE_PROFILE: CDH-CRS (Causal Disentangled Hypergraph-based CRS)
+
+## 1. Core Concept & Problem Formulation
+- **Domain**: Conversational Recommendation System (CRS).
+- **Primary Goal**: Mitigate Popularity Bias ($Z$) via Causal Inference ($do(P)$) and Hypergraph Modeling.
+- **Input**: Dialogue context $C = \{u_1, ..., u_T\}$, entities $E = \{e_1, ..., e_k\}$.
+- **Output**: Predicted item $\hat{y} \in \mathcal{I}$ where $P(y \mid z_{inv})$ is maximized.
+- **Causal Assumption**: $P(y \mid C, E) \neq P(y \mid do(P))$ due to popularity confounding.
+
+## 2. Hypergraph Preference Modeling ($\mathcal{H} = (V, \mathcal{E})$)
+- **Nodes ($V$)**: $V = \mathcal{E}_{entity} \cup \mathcal{I}$.
+- **Hyperedge Construction**: Each conversation $n$ forms one hyperedge $e^{(n)}$ containing all its entities $\{e_1, ..., e_k\}$. (Zero-shot annotation).
+- **Propagation Rule**:
+  $$X' = \sigma(D_v^{-1} H W_e D_e^{-1} H^T X W_v)$$
+  Where $H$ is the incidence matrix, $D_v$ and $D_e$ are degree matrices.
+
+## 3. Architecture Components
+- **Dialogue Encoder**: $h_C = \text{Encoder}(C) \in \mathbb{R}^d$.
+- **Hypergraph Entity Encoder**: $h_E = \frac{1}{k} \sum_{i=1}^{k} \text{HypergraphConv}(v_{e_i})$.
+- **Preference Representation**: $z = W_c h_C + W_e h_E$.
+- **Disentanglement Mechanism**:
+  - $z_{inv} = W_{inv} z$ (Invariant preference).
+  - $z_{spur} = W_{spur} z$ (Spurious popularity-correlated component).
+  - **Orthogonality Constraint**: $L_{orth} = |z_{inv}^T z_{spur}|_2$.
+
+## 4. Optimization & Objectives
+- **Causal Prediction Head**: $\hat{y} = \text{softmax}(W_r z_{inv})$.
+- **Popularity Debiased Loss**:
+  $$L_{rec} = - \sum \frac{1}{pop(y)^\gamma} \log P(y \mid z_{inv})$$
+  Where $pop(y)$ is normalized interaction frequency.
+- **Invariant Regularization ($L_{inv}$)**: Penalizes gradient variance across popularity quantiles: $L_{inv} = \sum_{k=1}^{K} |\nabla_{w|z_{inv}} L_k|^2$.
+- **Total Loss**: $L = L_{rec} + \lambda_1 L_{orth} + \lambda_2 L_{inv}$.
+
+## 5. Implementation Benchmarks vs. MSCRS
+| Feature | MSCRS (Baseline) | CDH-CRS (Ours) |
+| :--- | :--- | :--- |
+| **Graph Logic** | Pairwise (Entity-Entity) | Hypergraph (Dialogue-centric) |
+| **Prediction** | Correlation-based | Invariant Causal-based |
+| **Embeddings** | Entangled | Disentangled (Inv/Spur) |
+| **Debias** | None | Popularity Intervention |
+
+## 6. Key Contributions
+1. Shift from pairwise entities to **compositional hyperedges**.
+2. Prediction based strictly on **invariant representations**.
+3. Bias handling via **interventional reweighting**.
+4. Full compatibility with Redial/Inspired datasets without hidden field assumptions.

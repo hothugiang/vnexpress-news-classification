@@ -7,7 +7,7 @@ from torch_geometric.nn import RGCNConv
 
 
 class RoutingState:
-    def __init__(self, batch_size, entity_len, device=None):
+    def __init__(self, batch_size=None, entity_len=None, device=None):
         self.prev_g_hat = None  # g_hat^{(b-1)}
         self.prev_momentum = None  # g_mom^{(b-1)}
         self.prev_dialogue_emb = None

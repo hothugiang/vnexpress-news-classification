@@ -28,7 +28,7 @@ from utils import padded_tensor
 # ---------------------------------------------------------------------------
 
 
-class CRSRecConvDataset(Dataset):
+class CRSRecDataset(Dataset):
     """
     Mỗi sample = 1 conversation = list[turn_dict] đã sắp xếp theo turn_pos.
 
@@ -56,11 +56,13 @@ class CRSRecConvDataset(Dataset):
         entity_max_length: int = None,
         prompt_tokenizer=None,
         prompt_max_length: int = None,
+        use_resp=False,
     ):
         super().__init__()
         self.debug = debug
         self.tokenizer = tokenizer
         self.prompt_tokenizer = prompt_tokenizer
+        self.use_resp = use_resp
 
         self.context_max_length = context_max_length or tokenizer.model_max_length
         self.entity_max_length = entity_max_length or tokenizer.model_max_length
@@ -166,7 +168,7 @@ class CRSRecConvDataset(Dataset):
 # ---------------------------------------------------------------------------
 
 
-class CRSRecConvDataCollator:
+class CRSRecDataCollator:
     """
     Nhận batch = list of conversations, mỗi conversation = list[turn_dict].
 
@@ -295,7 +297,10 @@ class CRSRecConvDataCollator:
 
             # has_rec: conversation còn active VÀ có rec label tại turn t
             has_rec = torch.tensor(
-                [valid_mask[i].item() and rec_labels_full[i] > 0 for i in range(B)],
+                [
+                    valid_mask[i].item() and len(rec_labels_full[i]) > 0
+                    for i in range(B)
+                ],
                 dtype=torch.bool,
                 device=self.device,
             )
@@ -322,7 +327,7 @@ if __name__ == "__main__":
     from transformers import AutoTokenizer
     from config import gpt2_special_tokens_dict, prompt_special_tokens_dict
 
-    debug, device = True, torch.device("cpu")
+    debug, device = True, torch.device("cuda")
     dataset_dir, dataset = "rec_data", "inspired"
 
     tokenizer = AutoTokenizer.from_pretrained("models/DialoGPT-small")
@@ -330,7 +335,7 @@ if __name__ == "__main__":
     prompt_tokenizer = AutoTokenizer.from_pretrained("models/roberta_base")
     prompt_tokenizer.add_special_tokens(prompt_special_tokens_dict)
 
-    ds = CRSRecConvDataset(
+    ds = CRSRecDataset(
         dataset_dir=dataset_dir,
         dataset=dataset,
         split="test",
@@ -347,7 +352,7 @@ if __name__ == "__main__":
     kg = DBpedia(
         dataset_dir=dataset_dir, dataset=dataset, debug=debug
     ).get_entity_kg_info()
-    collator = CRSRecConvDataCollator(
+    collator = CRSRecDataCollator(
         tokenizer=tokenizer,
         device=device,
         pad_entity_id=kg["pad_entity_id"],

@@ -277,22 +277,24 @@ class CRSDataCollator:
 
 
 if __name__ == "__main__":
-    from dataset_dbpedia import DBpedia
+    from dataset_dbpedia_inspired import DBpedia
     from config import gpt2_special_tokens_dict
     from pprint import pprint
 
     debug = True
     device = torch.device("cpu")
     dataset = "inspired"
+    dataset_dir = "rec_data"
 
-    kg = DBpedia(dataset, debug=debug).get_entity_kg_info()
+    kg = DBpedia(dataset_dir, dataset, debug=debug).get_entity_kg_info()
 
-    model_name_or_path = "../utils/tokenizer/dialogpt-small"
+    model_name_or_path = "models/DialoGPT-small"
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     tokenizer.add_special_tokens(gpt2_special_tokens_dict)
-    prompt_tokenizer = AutoTokenizer.from_pretrained("../utils/tokenizer/roberta-base")
+    prompt_tokenizer = AutoTokenizer.from_pretrained("models/roberta_base")
 
     dataset = CRSDataset(
+        dataset_dir=dataset_dir,
         dataset=dataset,
         split="test",
         tokenizer=tokenizer,
@@ -323,15 +325,14 @@ if __name__ == "__main__":
     input_max_len = 0
     entity_max_len = 0
     for batch in tqdm(dataloader):
-        if debug:
-            pprint(batch)
-            print(tokenizer.decode(batch["context"]["input_ids"][1]))
-            print(prompt_tokenizer.decode(batch["prompt"]["input_ids"][1]))
-            exit()
+        pprint("=" * 96)
+        pprint(batch)
+        print(tokenizer.decode(batch["context"]["input_ids"][1]))
+        print(prompt_tokenizer.decode(batch["prompt"]["input_ids"][1]))
 
         input_max_len = max(input_max_len, batch["context"]["input_ids"].shape[1])
         entity_max_len = max(entity_max_len, batch["entity"].shape[1])
-
+        break
     print(input_max_len)
     print(entity_max_len)
     # redial: (1024, 31), (688, 29), (585, 19) -> (1024, 31)

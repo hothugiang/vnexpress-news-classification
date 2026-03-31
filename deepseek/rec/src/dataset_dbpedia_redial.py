@@ -46,6 +46,7 @@ class DBpedia:
 
         for entity in range(n_entity + 1):
             edge_list.append((entity, entity, SELF_LOOP_ID))
+        for entity in range(n_entity + 1):
             if str(entity) not in self.entity_kg:
                 continue
             for tail_and_relation in self.entity_kg[str(entity)]:
@@ -61,23 +62,32 @@ class DBpedia:
                     )
 
         relation_cnt = defaultdict(int)
-        relation_idx = {}
         for h, t, r in edge_list:
             relation_cnt[r] += 1
+        relation_idx = {SELF_LOOP_ID: 0}
         for h, t, r in edge_list:
-            if relation_cnt[r] > 1000 and r not in relation_idx:
-                relation_idx[r] = len(relation_idx) + 1
+            if r != SELF_LOOP_ID and relation_cnt[r] > 1000 and r not in relation_idx:
+                relation_idx[r] = len(relation_idx)
         edge_list = [
-            (h, t, relation_idx[r]) for h, t, r in edge_list if relation_cnt[r] > 1000
+            (h, t, relation_idx[r]) for h, t, r in edge_list if r in relation_idx
         ]
 
         edge = torch.as_tensor(edge_list, dtype=torch.long)
         self.edge_index = edge[:, :2].t()
-        self.edge_type = edge[:, 2]
+        self.edge_type = edge[:, 2].contiguous()
         self.num_relations = len(relation_idx)
         self.pad_entity_id = max(self.entity2id.values()) + 1
         self.num_entities = max(self.entity2id.values()) + 2
+
+        assert self.edge_type.min().item() >= 0, "edge_type có giá trị âm"
+        assert self.edge_type.max().item() < self.num_relations, (
+            f"edge_type max={self.edge_type.max().item()} >= num_relations={self.num_relations}"
+        )
+
         if self.debug:
+            logger.debug(
+                f"edge_type range: {self.edge_type.min().item()}, {self.edge_type.max().item()}"
+            )
             logger.debug(
                 f"#edge: {len(edge)}, #relation: {self.num_relations}, "
                 f"#entity: {self.num_entities}, #item: {len(self.item_ids)}"
@@ -130,7 +140,7 @@ class text_sim:
             self.id_to_idx = {node_id: idx for idx, node_id in enumerate(self.keys)}
             self.idx_to_id = {idx: node_id for node_id, idx in self.id_to_idx.items()}
             embeddings = np.array([id_embeddings[str(k)] for k in self.keys])
-            self.entity_embeds = torch.tensor(embeddings, dtype=torch.float)
+            self.embeddings = torch.tensor(embeddings, dtype=torch.float)
 
     def get_entity_ts_info(self):
         ts_info = {
@@ -160,7 +170,7 @@ class image_sim:
             self.id_to_idx = {node_id: idx for idx, node_id in enumerate(self.keys)}
             self.idx_to_id = {idx: node_id for node_id, idx in self.id_to_idx.items()}
             embeddings = np.array([id_embeddings[str(k)] for k in self.keys])
-            self.entity_embeds = torch.tensor(embeddings, dtype=torch.float)
+            self.embeddings = torch.tensor(embeddings, dtype=torch.float)
 
     def get_entity_is_info(self):
         is_info = {

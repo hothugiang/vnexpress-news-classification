@@ -13,11 +13,11 @@ from loguru import logger
 from torch.utils.data import DataLoader, random_split
 from tqdm.auto import tqdm
 from transformers import (
-    AdamW,
     get_linear_schedule_with_warmup,
     AutoTokenizer,
     AutoModel,
 )
+from torch.optim import AdamW
 from config import gpt2_special_tokens_dict, prompt_special_tokens_dict
 from dataset_dbpedia_redial import DBpedia, Co_occurrence, text_sim, image_sim
 from dataset_rec_copy import CRSRecDataset, CRSRecDataCollator
@@ -34,10 +34,16 @@ def parse_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="./prompt-for-rec",
+        default="output/redial_model",
         help="Where to store the final model.",
     )
     parser.add_argument("--debug", action="store_true", help="Debug mode.")
+    parser.add_argument(
+        "--dataset_dir",
+        type=str,
+        default="rec_data",
+        help="A file containing all data.",
+    )
     parser.add_argument(
         "--dataset", type=str, default="redial", help="A file containing all data."
     )
@@ -60,30 +66,30 @@ def parse_args():
     parser.add_argument(
         "--tokenizer",
         type=str,
-        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/DialoGPT-small",
+        default="models/DialoGPT-small",
     )
     parser.add_argument(
         "--text_tokenizer",
         type=str,
-        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/roberta_base",
+        default="models/roberta_base",
     )
     parser.add_argument(
         "--model",
         type=str,
-        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/DialoGPT-small",
+        default="models/DialoGPT-small",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
         "--text_encoder",
         type=str,
-        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/roberta_base",
+        default="models/roberta_base",
     )
     parser.add_argument("--num_bases", type=int, default=8, help="num_bases in RGCN.")
     parser.add_argument("--n_prefix_rec", type=int, default=10)
     parser.add_argument(
         "--prompt_encoder",
         type=str,
-        default="/home/weiyibiao/MSCRS-main/rec/src/pre-trained-redial/best",
+        default="output/pre-trained-redial/final",
     )
     parser.add_argument(
         "--num_train_epochs",
@@ -100,13 +106,13 @@ def parse_args():
     parser.add_argument(
         "--per_device_train_batch_size",
         type=int,
-        default=40,
+        default=8,
         help="Batch size (per device) for the training dataloader.",
     )
     parser.add_argument(
         "--per_device_eval_batch_size",
         type=int,
-        default=40,
+        default=64,
         help="Batch size (per device) for the evaluation dataloader.",
     )
     parser.add_argument(
@@ -128,8 +134,10 @@ def parse_args():
     parser.add_argument("--num_warmup_steps", type=int, default=530)
     parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--use_wandb", action="store_true", help="whether to use wandb")
-    parser.add_argument("--entity", type=str, help="wandb username")
-    parser.add_argument("--project", type=str, help="wandb exp project")
+    parser.add_argument(
+        "--entity", type=str, help="wandb username", default="longvh-research-vnu"
+    )
+    parser.add_argument("--project", type=str, help="wandb exp project", default="rec")
     parser.add_argument("--name", type=str, help="wandb exp name")
     parser.add_argument(
         "--log_all",
@@ -143,7 +151,11 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     config = vars(args)
-    accelerator = Accelerator(device_placement=False)
+    from accelerate.utils import DistributedDataParallelKwargs
+
+    # Tạo kwargs handler cho DDP
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
     device = accelerator.device
     local_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     logger.remove()
@@ -154,8 +166,7 @@ if __name__ == "__main__":
         f"log/{local_time}.log",
         level="DEBUG" if accelerator.is_local_main_process else "ERROR",
     )
-    logger.info(accelerator.state)
-    logger.info(config)
+
     if accelerator.is_local_main_process:
         transformers.utils.logging.set_verbosity_info()
     else:
@@ -181,11 +192,15 @@ if __name__ == "__main__":
                 run = None
     else:
         run = None
+    logger.info(accelerator.state)
+    logger.info(config)
     if args.seed is not None:
         set_seed(args.seed)
     if args.output_dir is not None:
         os.makedirs(args.output_dir, exist_ok=True)
-    kg = DBpedia(dataset=args.dataset, debug=args.debug).get_entity_kg_info()
+    kg = DBpedia(
+        dataset_dir=args.dataset_dir, dataset=args.dataset, debug=args.debug
+    ).get_entity_kg_info()
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     tokenizer.add_special_tokens(gpt2_special_tokens_dict)
     model = PromptGPT2forCRS.from_pretrained(args.model)
@@ -198,6 +213,7 @@ if __name__ == "__main__":
     text_encoder.resize_token_embeddings(len(text_tokenizer))
     text_encoder = text_encoder.to(device)
     train_dataset = CRSRecDataset(
+        dataset_dir=args.dataset_dir,
         dataset=args.dataset,
         split="train",
         debug=args.debug,
@@ -208,22 +224,31 @@ if __name__ == "__main__":
         prompt_max_length=args.prompt_max_length,
         entity_max_length=args.entity_max_length,
     )
-    co = Co_occurrence(
+    # co = Co_occurrence(
+    #     dataset=args.dataset,
+    #     split="train",
+    #     debug=args.debug,
+    #     all_items=kg["item_ids"],
+    #     entity_max_length=args.entity_max_length,
+    #     n_entity=kg["num_entities"],
+    # ).get_entity_co_info()
+    text_simi = text_sim(
+        dataset_dir=args.dataset_dir,
         dataset=args.dataset,
-        split="train",
-        debug=args.debug,
-        all_items=kg["item_ids"],
-        entity_max_length=args.entity_max_length,
-        n_entity=kg["num_entities"],
-    ).get_entity_co_info()
-    text_simi = text_sim(pad_entity_id=kg["pad_entity_id"]).get_entity_ts_info()
-    image_simi = image_sim(pad_entity_id=kg["pad_entity_id"]).get_entity_is_info()
+        pad_entity_id=kg["pad_entity_id"],
+    ).get_entity_ts_info()
+    image_simi = image_sim(
+        dataset_dir=args.dataset_dir,
+        dataset=args.dataset,
+        pad_entity_id=kg["pad_entity_id"],
+    ).get_entity_is_info()
     shot_len = int(len(train_dataset) * args.shot)
     train_dataset = random_split(
         train_dataset, [shot_len, len(train_dataset) - shot_len]
     )[0]
     assert len(train_dataset) == shot_len
     valid_dataset = CRSRecDataset(
+        dataset_dir=args.dataset_dir,
         dataset=args.dataset,
         split="valid",
         debug=args.debug,
@@ -235,6 +260,7 @@ if __name__ == "__main__":
         entity_max_length=args.entity_max_length,
     )
     test_dataset = CRSRecDataset(
+        dataset_dir=args.dataset_dir,
         dataset=args.dataset,
         split="test",
         debug=args.debug,
@@ -283,10 +309,9 @@ if __name__ == "__main__":
         num_bases=args.num_bases,
         edge_index=kg["edge_index"],
         edge_type=kg["edge_type"],
-        edge_index_c=co["edge_index_c"],
-        edge_index_t_s=text_simi["edge_index_t_s"],
-        edge_index_i_s=image_simi["edge_index_i_s"],
-        idx_to_id=text_simi["idx_to_id"],
+        text_embeddings=text_simi["embeddings"],
+        image_embeddings=image_simi["embeddings"],
+        id_to_idx=text_simi["id_to_idx"],
         n_prefix_rec=args.n_prefix_rec,
     )
     if args.prompt_encoder is not None:
@@ -394,7 +419,7 @@ if __name__ == "__main__":
                 model(**batch["context"], rec=True).rec_loss
                 / args.gradient_accumulation_steps
             )
-            loss = loss + loss_cl * 0.001 + loss_lb * 0.001
+            loss = loss + loss_cl * 0.01 + loss_lb * 0.01
             accelerator.backward(loss)
             train_loss.append(float(loss))
             if (

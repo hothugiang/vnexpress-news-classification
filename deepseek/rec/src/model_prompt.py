@@ -262,7 +262,7 @@ class DCMoMEPrompt(nn.Module):
         scores = torch.stack([scores_kg, scores_txt, scores_vis], dim=-1)
 
         g = F.softmax(scores / math.sqrt(self.hidden_size), dim=-1)  # [B, L, 3]
-
+        return g, g, g
         # ---- Bước 2: Momentum & Drift ----
         if state.current_turn == 0:
             # Nếu không có lịch sử (turn đầu tiên), dùng g trực tiếp

@@ -159,8 +159,7 @@ if __name__ == "__main__":
         f"log/{local_time}.log",
         level="DEBUG" if accelerator.is_local_main_process else "ERROR",
     )
-    logger.info(config)
-    logger.info(accelerator.state)
+
     if accelerator.is_local_main_process:
         transformers.utils.logging.set_verbosity_info()
     else:
@@ -187,6 +186,8 @@ if __name__ == "__main__":
                 run = None
     else:
         run = None
+    logger.info(config)
+    logger.info(accelerator.state)
     if args.seed is not None:
         set_seed(args.seed)
         torch.backends.cudnn.benchmark = False
@@ -413,7 +414,7 @@ if __name__ == "__main__":
                 model(**batch["context"], rec=True).rec_loss
                 / args.gradient_accumulation_steps
             )
-            loss = loss + loss_cl * 0.0001 + loss_lb * 0.01
+            loss = loss + loss_cl * 0.01 + loss_lb * 0.01
             accelerator.backward(loss)
             train_loss.append(float(loss))
 

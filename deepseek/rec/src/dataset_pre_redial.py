@@ -77,8 +77,8 @@ class CRSDataset(Dataset):
                         "rec": rec,
                     }
                     self.data.append(data)
-                    if len(self.data) >= 100:
-                        return
+                    # if len(self.data) >= 100:
+                    #     return
 
     def __getitem__(self, ind):
         return self.data[ind]

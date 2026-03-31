@@ -13,17 +13,17 @@ from loguru import logger
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import (
-    AdamW,
     get_linear_schedule_with_warmup,
     AutoTokenizer,
     AutoModel,
 )
+from torch.optim import AdamW
 from dataset_dbpedia_redial import DBpedia, Co_occurrence, text_sim, image_sim
 from dataset_pre_redial import CRSDataset, CRSDataCollator_mm
 from evaluate_rec import RecEvaluator
 from model_gpt2 import PromptGPT2forCRS
 from config import gpt2_special_tokens_dict, prompt_special_tokens_dict
-from model_prompt import MMPrompt
+from model_prompt import DCMoMEPrompt
 
 
 def parse_args():
@@ -34,12 +34,18 @@ def parse_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="/home/weiyibiao/MSCRS-main/rec/src/pre-trained-redial",
+        default="output/pre-trained-redial",
         help="Where to store the final model.",
     )
     parser.add_argument("--debug", action="store_true", help="Debug mode.")
     parser.add_argument(
         "--dataset", type=str, default="redial", help="A file containing all data."
+    )
+    parser.add_argument(
+        "--dataset_dir",
+        type=str,
+        default="rec_data",
+        help="A file containing all data.",
     )
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument(
@@ -55,23 +61,23 @@ def parse_args():
     parser.add_argument(
         "--tokenizer",
         type=str,
-        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/DialoGPT-small",
+        default="models/DialoGPT-small",
     )
     parser.add_argument(
         "--text_tokenizer",
         type=str,
-        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/roberta_base",
+        default="models/roberta_base",
     )
     parser.add_argument(
         "--model",
         type=str,
-        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/DialoGPT-small",
+        default="models/DialoGPT-small",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
         "--text_encoder",
         type=str,
-        default="/home/weiyibiao/weiyibiao/UniCRS-main/src/roberta_base",
+        default="models/roberta_base",
     )
     parser.add_argument("--num_bases", type=int, default=8, help="num_bases in RGCN.")
     parser.add_argument(
@@ -89,13 +95,13 @@ def parse_args():
     parser.add_argument(
         "--per_device_train_batch_size",
         type=int,
-        default=25,
+        default=8,
         help="Batch size (per device) for the training dataloader.",
     )
     parser.add_argument(
         "--per_device_eval_batch_size",
         type=int,
-        default=25,
+        default=64,
         help="Batch size (per device) for the evaluation dataloader.",
     )
     parser.add_argument(
@@ -117,8 +123,12 @@ def parse_args():
     parser.add_argument("--num_warmup_steps", type=int, default=1389)
     parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--use_wandb", action="store_true", help="whether to use wandb")
-    parser.add_argument("--entity", type=str, help="wandb username")
-    parser.add_argument("--project", type=str, help="wandb exp project")
+    parser.add_argument(
+        "--entity", type=str, help="wandb username", default="longvh-research-vnu"
+    )
+    parser.add_argument(
+        "--project", type=str, help="wandb exp project", default="pretrain"
+    )
     parser.add_argument("--name", type=str, help="wandb exp name")
     parser.add_argument(
         "--log_all",
@@ -132,7 +142,13 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     config = vars(args)
-    accelerator = Accelerator()
+    from accelerate.utils import DistributedDataParallelKwargs
+
+    # Tạo kwargs handler cho DDP
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+
+    # Khởi tạo accelerator với handler
+    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
     device = accelerator.device
     local_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     logger.remove()
@@ -143,8 +159,6 @@ if __name__ == "__main__":
         f"log/{local_time}.log",
         level="DEBUG" if accelerator.is_local_main_process else "ERROR",
     )
-    logger.info(config)
-    logger.info(accelerator.state)
 
     if accelerator.is_local_main_process:
         transformers.utils.logging.set_verbosity_info()
@@ -173,7 +187,8 @@ if __name__ == "__main__":
                 run = None
     else:
         run = None
-
+    logger.info(config)
+    logger.info(accelerator.state)
     # If passed along, set the training seed now.
     if args.seed is not None:
         set_seed(args.seed)
@@ -215,8 +230,16 @@ if __name__ == "__main__":
     #     entity_max_length=args.entity_max_length,
     #     n_entity=kg["num_entities"],
     # ).get_entity_co_info()
-    text_simi = text_sim(pad_entity_id=kg["pad_entity_id"]).get_entity_ts_info()
-    image_simi = image_sim(pad_entity_id=kg["pad_entity_id"]).get_entity_is_info()
+    text_simi = text_sim(
+        dataset_dir=args.dataset_dir,
+        dataset=args.dataset,
+        pad_entity_id=kg["pad_entity_id"],
+    ).get_entity_ts_info()
+    image_simi = image_sim(
+        dataset_dir=args.dataset_dir,
+        dataset=args.dataset,
+        pad_entity_id=kg["pad_entity_id"],
+    ).get_entity_is_info()
 
     valid_dataset = CRSDataset(
         dataset_dir=args.dataset_dir,
@@ -246,7 +269,7 @@ if __name__ == "__main__":
         pad_entity_id=kg["pad_entity_id"],
         max_length=args.max_length,
         entity_max_length=args.entity_max_length,
-        use_amp=accelerator.use_fp16,
+        use_amp=accelerator.mixed_precision,
         debug=args.debug,
         prompt_tokenizer=text_tokenizer,
         prompt_max_length=args.prompt_max_length,
@@ -270,7 +293,7 @@ if __name__ == "__main__":
         collate_fn=data_collator,
     )
 
-    prompt_encoder = MMPrompt(
+    prompt_encoder = DCMoMEPrompt(
         model.config.n_embd,
         text_encoder.config.hidden_size,
         model.config.n_head,
@@ -281,9 +304,9 @@ if __name__ == "__main__":
         num_bases=args.num_bases,
         edge_index=kg["edge_index"],
         edge_type=kg["edge_type"],
-        edge_index_i_s=image_simi["edge_index_i_s"],
-        edge_index_t_s=text_simi["edge_index_t_s"],
-        idx_to_id=text_simi["idx_to_id"],
+        text_embeddings=text_simi["embeddings"],
+        image_embeddings=image_simi["embeddings"],
+        id_to_idx=text_simi["id_to_idx"],
     ).to(device)
 
     fix_modules = [model, text_encoder]
@@ -393,7 +416,7 @@ if __name__ == "__main__":
                 model(**batch["context"], rec=True).rec_loss
                 / args.gradient_accumulation_steps
             )
-            loss = loss + loss_cl * 0.0001 + loss_lb * 0.01
+            loss = loss + loss_cl * 0.01 + loss_lb * 0.01
             accelerator.backward(loss)
             train_loss.append(float(loss))
 

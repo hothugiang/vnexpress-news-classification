@@ -103,6 +103,7 @@ class text_sim:
         self.prepare_data(data_file)
 
     def prepare_data(self, data_file):
+
         with open(data_file, "r", encoding="utf-8") as f:
             id_embeddings = json.load(f)
             new_key = self.pad_entity_id
@@ -112,12 +113,37 @@ class text_sim:
             self.keys = [int(key) for key in self.keys]
             self.id_to_idx = {node_id: idx for idx, node_id in enumerate(self.keys)}
             self.idx_to_id = {idx: node_id for node_id, idx in self.id_to_idx.items()}
-            embeddings = np.array([id_embeddings[str(k)] for k in self.keys])
-            self.embeddings = torch.tensor(embeddings, dtype=torch.float)
+            embeddings = np.array(list(id_embeddings.values()))
+            similarity_matrix = cosine_similarity(embeddings)
+            top_k = 10
+            top_k_indices = np.argsort(-similarity_matrix, axis=1)[
+                :, 1 : top_k + 1
+            ]  # 除去自己
+            top_k_dict = {}
+
+            for i, key in enumerate(self.keys):
+                top_k_dict[key] = [
+                    (self.keys[idx]) for j, idx in enumerate(top_k_indices[i])
+                ]
+            top_k_dict[new_key] = [new_key]
+            mapped_edges = []
+            for key, similar_items in top_k_dict.items():
+                src_idx = self.id_to_idx[key]
+                for target_key in similar_items:
+                    tgt_idx = self.id_to_idx[target_key]
+                    mapped_edges.append([src_idx, tgt_idx])
+
+            new_list = [[mapped_edges[0][0]], [mapped_edges[0][1]]]
+
+            for i in range(1, len(mapped_edges)):
+                new_list[0].append(mapped_edges[i][0])
+                new_list[1].append(mapped_edges[i][1])
+
+            self.edge_index_t_s = torch.as_tensor(new_list, dtype=torch.long)
 
     def get_entity_ts_info(self):
         ts_info = {
-            "embeddings": self.embeddings,
+            "edge_index_t_s": self.edge_index_t_s,
             "id_to_idx": self.id_to_idx,
             "idx_to_id": self.idx_to_id,
             "all_movie": self.keys,
@@ -142,14 +168,94 @@ class image_sim:
             self.keys = [int(key) for key in self.keys]
             self.id_to_idx = {node_id: idx for idx, node_id in enumerate(self.keys)}
             self.idx_to_id = {idx: node_id for node_id, idx in self.id_to_idx.items()}
-            embeddings = np.array([id_embeddings[str(k)] for k in self.keys])
-            self.embeddings = torch.tensor(embeddings, dtype=torch.float)
+            embeddings = np.array(list(id_embeddings.values()))
+            similarity_matrix = cosine_similarity(embeddings)
+            top_k = 10
+            top_k_indices = np.argsort(-similarity_matrix, axis=1)[:, 1 : top_k + 1]
+            top_k_dict = {}
+            for i, key in enumerate(self.keys):
+                top_k_dict[key] = [
+                    (self.keys[idx]) for j, idx in enumerate(top_k_indices[i])
+                ]
+            top_k_dict[new_key] = [new_key]
+            mapped_edges = []
+            for key, similar_items in top_k_dict.items():
+                src_idx = self.id_to_idx[key]
+                for target_key in similar_items:
+                    tgt_idx = self.id_to_idx[target_key]
+                    mapped_edges.append([src_idx, tgt_idx])
+            new_list = [[mapped_edges[0][0]], [mapped_edges[0][1]]]
+            for i in range(1, len(mapped_edges)):
+                new_list[0].append(mapped_edges[i][0])
+                new_list[1].append(mapped_edges[i][1])
+            self.edge_index_i_s = torch.as_tensor(new_list, dtype=torch.long)
 
     def get_entity_is_info(self):
         is_info = {
-            "embeddings": self.embeddings,
+            "edge_index_i_s": self.edge_index_i_s,
             "id_to_idx": self.id_to_idx,
             "idx_to_id": self.idx_to_id,
             "all_movie": self.keys,
         }
         return is_info
+
+
+if __name__ == "__main__":
+    dataset_dir = "rec_data"
+    dataset = "inspired"
+    debug = True
+    kg = DBpedia(
+        dataset_dir=dataset_dir, dataset=dataset, debug=debug
+    ).get_entity_kg_info()
+    text_simi = text_sim(
+        dataset_dir=dataset_dir,
+        dataset=dataset,
+        pad_entity_id=kg["pad_entity_id"],
+    ).get_entity_ts_info()
+    image_simi = image_sim(
+        dataset_dir=dataset_dir,
+        dataset=dataset,
+        pad_entity_id=kg["pad_entity_id"],
+    ).get_entity_is_info()
+
+    # ===== DEBUG idx_to_id =====
+    idx_to_id = text_simi["idx_to_id"]
+
+    print("\n=== IDX_TO_ID INFO ===")
+    print("length:", len(idx_to_id))
+
+    # in 10 phần tử đầu
+    print("sample idx_to_id:")
+    for i, (k, v) in enumerate(idx_to_id.items()):
+        if i >= 10:
+            break
+        print(f"{k} -> {v}")
+
+    # ===== tensor mapping =====
+    idx_to_id_tensor = torch.tensor(
+        [idx_to_id[i] for i in range(len(idx_to_id))], dtype=torch.long
+    )
+
+    print("\nidx_to_id_tensor shape:", idx_to_id_tensor.shape)
+    print("idx_to_id_tensor sample:", idx_to_id_tensor[:10])
+
+    # ===== sorted mapping =====
+    sorted_ids = sorted(idx_to_id.keys())
+    sorted_indices = torch.tensor(
+        [idx_to_id[id] for id in sorted_ids], dtype=torch.long
+    )
+
+    print("\nsorted_ids sample:", sorted_ids[:10])
+    print("sorted_indices shape:", sorted_indices.shape)
+    print("sorted_indices sample:", sorted_indices[:10])
+
+    # ===== consistency check =====
+    print("\n=== CONSISTENCY CHECK ===")
+    print("max idx:", max(idx_to_id.keys()))
+    print("min idx:", min(idx_to_id.keys()))
+
+    # check missing index
+    missing = set(range(len(idx_to_id))) - set(idx_to_id.keys())
+    print("missing indices:", list(missing)[:10], "..." if len(missing) > 10 else "")
+
+    print("\n=== DONE DEBUG ===")

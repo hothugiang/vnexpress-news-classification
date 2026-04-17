@@ -23,7 +23,7 @@ from dataset_dbpedia_redial import DBpedia, Co_occurrence, text_sim, image_sim
 from dataset_rec_copy import CRSRecDataset, CRSRecDataCollator
 from evaluate_rec import RecEvaluator
 from model_gpt2 import PromptGPT2forCRS
-from model_prompt import MMPrompt
+from model_prompt import DCMoMEPrompt
 
 
 def parse_args():
@@ -297,7 +297,28 @@ if __name__ == "__main__":
         batch_size=args.per_device_eval_batch_size,
         collate_fn=data_collator,
     )
+    train_items = set()
+    for batch in train_dataloader:
+        labels = batch["context"]["rec_labels"].tolist()
+        train_items.update(labels)
 
+    valid_items = set()
+    for batch in valid_dataloader:
+        labels = batch["context"]["rec_labels"].tolist()
+        valid_items.update(labels)
+
+    test_items = set()
+    for batch in test_dataloader:
+        labels = batch["context"]["rec_labels"].tolist()
+        test_items.update(labels)
+
+    print(f"Train items: {len(train_items)}")
+    print(f"Valid items: {len(valid_items)}")
+    print(f"Test items: {len(test_items)}")
+    print(f"Overlap: {len(train_items & valid_items)}")
+    print(f"Valid items NOT in train: {len(valid_items - train_items)}")
+    print(f"Test items NOT in train: {len(test_items - train_items)}")
+    exit(0)
     prompt_encoder = MMPrompt(
         model.config.n_embd,
         text_encoder.config.hidden_size,

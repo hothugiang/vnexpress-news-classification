@@ -18,12 +18,18 @@ from transformers import (
     AutoModel,
 )
 from torch.optim import AdamW
+import torch.nn.functional as F
 from dataset_dbpedia_inspired import DBpedia, Co_occurrence, text_sim, image_sim
 from dataset_pre_inspired import CRSDataset, CRSDataCollator_mm
 from evaluate_rec import RecEvaluator
 from model_gpt2 import PromptGPT2forCRS
 from config import gpt2_special_tokens_dict, prompt_special_tokens_dict
-from model_prompt import DCMoMEPrompt
+from model_prompt import UHCSGPrompt
+from dataset_graph import (
+    UHCSGGraphBuilder,
+    extract_dialogue_items_from_dataset,
+    load_movielens_from_pt,
+)
 
 
 def parse_args():
@@ -135,6 +141,12 @@ def parse_args():
         action="store_true",
         help="log in all processes, otherwise only in rank0",
     )
+    parser.add_argument(
+        "--num_lightgcn_layers",
+        type=int,
+        default=4,
+        help="Number of layers in LightGCN.",
+    )
     args = parser.parse_args()
     return args
 
@@ -238,6 +250,20 @@ if __name__ == "__main__":
         dataset=args.dataset,
         pad_entity_id=kg["pad_entity_id"],
     ).get_entity_is_info()
+    dialogue_items = extract_dialogue_items_from_dataset(
+        dataset_dir=args.dataset_dir, dataset=args.dataset, split="train"
+    )
+    pt_file = os.path.join(f"movielens_edges_{args.dataset}.pt")
+    ml_edges, n_ml_users, _, _ = load_movielens_from_pt(pt_file=pt_file)
+    graph_info = UHCSGGraphBuilder(
+        n_entity=kg["num_entities"],
+        edge_index_t_s=text_simi["edge_index_t_s"],
+        edge_index_i_s=image_simi["edge_index_i_s"],
+        idx_to_id=text_simi["idx_to_id"],
+        dialogue_items=dialogue_items,
+        movielens_edges=ml_edges,
+        num_ml_users=n_ml_users,
+    ).get_graph_info()
 
     valid_dataset = CRSDataset(
         dataset_dir=args.dataset_dir,
@@ -290,8 +316,29 @@ if __name__ == "__main__":
         batch_size=args.per_device_eval_batch_size,
         collate_fn=data_collator,
     )
+    train_items = set()
+    for batch in train_dataloader:
+        labels = batch["context"]["rec_labels"].tolist()
+        train_items.update(labels)
 
-    prompt_encoder = DCMoMEPrompt(
+    valid_items = set()
+    for batch in valid_dataloader:
+        labels = batch["context"]["rec_labels"].tolist()
+        valid_items.update(labels)
+
+    test_items = set()
+    for batch in test_dataloader:
+        labels = batch["context"]["rec_labels"].tolist()
+        test_items.update(labels)
+    print(f"Train items: {len(train_items)}")
+    print(f"Valid items: {len(valid_items)}")
+    print(f"Test items: {len(test_items)}")
+    print(f"Overlap train & valid: {len(train_items & valid_items)}")
+    print(f"Overlap train & test: {len(train_items & test_items)}")
+    print(f"Valid items NOT in train: {len(valid_items - train_items)}")
+    print(f"Test items NOT in train: {len(test_items - train_items)}")
+    # exit(0)
+    prompt_encoder = UHCSGPrompt(
         model.config.n_embd,
         text_encoder.config.hidden_size,
         model.config.n_head,
@@ -302,10 +349,21 @@ if __name__ == "__main__":
         num_bases=args.num_bases,
         edge_index=kg["edge_index"],
         edge_type=kg["edge_type"],
-        text_embeddings=text_simi["embeddings"],
-        image_embeddings=image_simi["embeddings"],
-        id_to_idx=text_simi["id_to_idx"],
+        # edge_index_c=co["edge_index_c"],
+        # UH-CSG specific:
+        unified_edge_index=graph_info["unified_edge_index"],
+        num_dialogues=graph_info["num_dialogues"],
+        num_ml_users=graph_info["num_ml_users"],
+        dialogue_item_map=graph_info["dialogue_item_map"],
+        movielens_edges=graph_info.get("movielens_edges"),
+        num_lightgcn_layers=args.num_lightgcn_layers,
     ).to(device)
+    # Chạy thử để debug
+    # print("movie_entity_ids length :", len(kg["item_ids"]))
+    # print("text_embeddings shape   :", text_simi["embeddings"].shape)
+    # print("text all movie: ", len(text_simi["all_movie"]))
+    # print("image_embeddings shape  :", image_simi["embeddings"].shape)
+    # print("image all movie: ", len(image_simi["all_movie"]))
 
     fix_modules = [model, text_encoder]
     for module in fix_modules:
@@ -402,19 +460,24 @@ if __name__ == "__main__":
         for step, batch in enumerate(train_dataloader):
             with torch.no_grad():
                 token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-            prompt_embeds, loss_cl, loss_lb, entity_embeds_all = prompt_encoder(
+            prompt_embeds, loss_cl = prompt_encoder(
                 entity_ids=batch["entity"],
                 token_embeds=token_embeds,
                 output_entity=True,
             )
             batch["context"]["prompt_embeds"] = prompt_embeds
-            batch["context"]["entity_embeds"] = entity_embeds_all
-
-            loss = (
+            batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()
+            # loss_align = prompt_encoder.loss_align
+            loss_rec = (
                 model(**batch["context"], rec=True).rec_loss
                 / args.gradient_accumulation_steps
             )
-            loss = loss + loss_cl * 0.01 + loss_lb * 0.01
+            loss = loss_rec + loss_cl * 0.1
+            # loss = (
+            #     model(**batch["context"], rec=True).rec_loss
+            #     / args.gradient_accumulation_steps
+            # )
+            # loss = loss + loss_cl * 0.0001
             accelerator.backward(loss)
             train_loss.append(float(loss))
 
@@ -432,6 +495,13 @@ if __name__ == "__main__":
                 optimizer.zero_grad()
 
                 progress_bar.update(1)
+                progress_bar.set_postfix(
+                    {
+                        "rec": f"{float(loss_rec):.4f}",
+                        "cl": f"{float(loss_cl):.4f}",
+                        # "align": f"{float(loss_align):.4f}",
+                    }
+                )
                 completed_steps += 1
                 if run:
                     run.log(
@@ -453,13 +523,13 @@ if __name__ == "__main__":
         for batch in tqdm(valid_dataloader):
             with torch.no_grad():
                 token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-                prompt_embeds, loss_cl, loss_lb, entity_embeds_all = prompt_encoder(
+                prompt_embeds, loss_cl = prompt_encoder(
                     entity_ids=batch["entity"],
                     token_embeds=token_embeds,
                     output_entity=True,
                 )
                 batch["context"]["prompt_embeds"] = prompt_embeds
-                batch["context"]["entity_embeds"] = entity_embeds_all
+                batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()
 
                 outputs = model(**batch["context"], rec=True)
                 valid_loss.append(float(outputs.rec_loss))
@@ -495,13 +565,13 @@ if __name__ == "__main__":
         for batch in tqdm(test_dataloader):
             with torch.no_grad():
                 token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-                prompt_embeds, loss_cl, loss_lb, entity_embeds_all = prompt_encoder(
+                prompt_embeds, loss_cl = prompt_encoder(
                     entity_ids=batch["entity"],
                     token_embeds=token_embeds,
                     output_entity=True,
                 )
                 batch["context"]["prompt_embeds"] = prompt_embeds
-                batch["context"]["entity_embeds"] = entity_embeds_all
+                batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()
 
                 outputs = model(**batch["context"], rec=True)
                 test_loss.append(float(outputs.rec_loss))

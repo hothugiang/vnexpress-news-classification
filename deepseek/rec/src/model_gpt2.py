@@ -77,6 +77,58 @@ def prune_conv1d_layer(layer: Conv1D, index: torch.LongTensor, dim: int = 1) -> 
     return new_layer
 
 
+def bpr_loss(
+    logits: torch.Tensor, labels: torch.Tensor, n_neg: int = 64
+) -> torch.Tensor:
+    """
+    Pairwise BPR: mỗi positive so với toàn bộ items còn lại làm negative.
+    rec_logits: (bs, n_item)
+    rec_labels: (bs,)  — index của positive item
+    """
+    bs = logits.size(0)
+    pos_scores = logits[torch.arange(bs, device=logits.device), labels]  # (bs,)
+
+    # diff[i, j] = score(pos_i) - score(item_j)  →  muốn > 0 với mọi j ≠ pos
+    neg_scores, _ = logits.topk(n_neg + 1, dim=-1)  # (bs, n_neg+1)
+
+    # Mask chính positive ra (diff = +inf → log_sigmoid → 0, không đóng góp loss)
+    bpr = -F.logsigmoid(pos_scores.unsqueeze(1) - neg_scores).mean()
+
+    ce = F.cross_entropy(logits, labels)
+    return 0.5 * bpr + 0.5 * ce
+
+
+def approx_ndcg_loss(
+    rec_logits: torch.Tensor,
+    rec_labels: torch.Tensor,
+    alpha: float = 10.0,
+) -> torch.Tensor:
+    """
+    ApproxNDCG (NeuralNDCG-style, O(n) với single relevant item).
+    Ước tính rank của positive item qua xác suất sigmoid thay vì argsort.
+    alpha: temperature — càng lớn xấp xỉ càng sắc nét, default 10.
+    """
+    bs = rec_logits.size(0)
+    device = rec_logits.device
+
+    pos_scores = rec_logits[torch.arange(bs, device=device), rec_labels]  # (bs,)
+
+    # Ước tính số items được xếp trên positive:
+    # E[rank(pos)] ≈ 1 + Σ_j sigmoid(α * (s_j - s_pos))
+    # Trừ 0.5 để debiased (vì chính pos cũng contribute sigmoid(0)=0.5)
+    rank_approx = (
+        1.0
+        + torch.sigmoid(alpha * (rec_logits - pos_scores.unsqueeze(1))).sum(dim=1)
+        - 0.5
+    )  # (bs,)
+
+    # DCG = gain / discount; với 1 relevant item: gain = 1, IDCG = 1
+    dcg = 1.0 / torch.log2(rank_approx + 1.0)  # (bs,)
+
+    # Trả về negative DCG (minimize)
+    return -dcg.mean()
+
+
 @dataclass
 class MultiOutput(ModelOutput):
     conv_loss: Optional[torch.FloatTensor] = None
@@ -233,8 +285,10 @@ class PromptGPT2forCRS(GPT2PreTrainedModel):
             rec_logits @= entity_embeds.T  # (bs, n_item)
 
             if rec_labels is not None:
-                # loss_fct = CrossEntropyLoss()
                 rec_loss = F.cross_entropy(rec_logits, rec_labels)
+
+                # bpr = bpr_loss(rec_logits, rec_labels)
+                # rec_loss = bpr
 
         loss, lm_logits = None, None
         if conv:

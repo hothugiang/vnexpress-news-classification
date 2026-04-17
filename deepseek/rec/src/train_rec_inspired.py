@@ -5,6 +5,7 @@ import sys
 import time
 import numpy as np
 import torch
+from torch import nn
 import transformers
 import wandb
 from accelerate import Accelerator
@@ -229,14 +230,14 @@ if __name__ == "__main__":
         entity_max_length=args.entity_max_length,
     )
     print(kg["num_entities"])
-    # co = Co_occurrence(
-    #     dataset=args.dataset,
-    #     split="train",
-    #     debug=args.debug,
-    #     all_items=kg["item_ids"],
-    #     entity_max_length=args.entity_max_length,
-    #     n_entity=kg["num_entities"],
-    # ).get_entity_co_info()
+    co = Co_occurrence(
+        dataset=args.dataset,
+        split="train",
+        debug=args.debug,
+        all_items=kg["item_ids"],
+        entity_max_length=args.entity_max_length,
+        n_entity=kg["num_entities"],
+    ).get_entity_co_info()
     text_simi = text_sim(
         dataset_dir=args.dataset_dir,
         dataset=args.dataset,
@@ -302,7 +303,28 @@ if __name__ == "__main__":
         batch_size=args.per_device_eval_batch_size,
         collate_fn=data_collator,
     )
+    train_items = set()
+    for batch in train_dataloader:
+        labels = batch["context"]["rec_labels"].tolist()
+        train_items.update(labels)
 
+    valid_items = set()
+    for batch in valid_dataloader:
+        labels = batch["context"]["rec_labels"].tolist()
+        valid_items.update(labels)
+
+    test_items = set()
+    for batch in test_dataloader:
+        labels = batch["context"]["rec_labels"].tolist()
+        test_items.update(labels)
+
+    print(f"Train items: {len(train_items)}")
+    print(f"Valid items: {len(valid_items)}")
+    print(f"Test items: {len(test_items)}")
+    print(f"Overlap: {len(train_items & valid_items)}")
+    print(f"Valid items NOT in train: {len(valid_items - train_items)}")
+    print(f"Test items NOT in train: {len(test_items - train_items)}")
+    exit(0)
     prompt_encoder = DCMoMEPrompt(
         model.config.n_embd,
         text_encoder.config.hidden_size,
@@ -314,11 +336,18 @@ if __name__ == "__main__":
         num_bases=args.num_bases,
         edge_index=kg["edge_index"],
         edge_type=kg["edge_type"],
+        edge_index_c=co["edge_index_c"],
         text_embeddings=text_simi["embeddings"],
         image_embeddings=image_simi["embeddings"],
         id_to_idx=text_simi["id_to_idx"],
+        movie_entity_ids=torch.tensor(text_simi["all_movie"], dtype=torch.long),
         n_prefix_rec=args.n_prefix_rec,
     )
+    print("movie_entity_ids length :", len(kg["item_ids"]))
+    print("text_embeddings shape   :", text_simi["embeddings"].shape)
+    print("text all movie: ", len(text_simi["all_movie"]))
+    print("image_embeddings shape  :", image_simi["embeddings"].shape)
+    print("image all movie: ", len(image_simi["all_movie"]))
 
     if args.prompt_encoder is not None:
         prompt_encoder.load(args.prompt_encoder)
@@ -416,21 +445,24 @@ if __name__ == "__main__":
         train_loss = []
         prompt_encoder.train()
         for step, batch in enumerate(train_dataloader):
+            # print("Train entity ids sample:", batch["entity"][0])
+            # print("Valid entity ids sample:", next(iter(valid_dataloader))["entity"][0])
+
             with torch.no_grad():
                 token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-            prompt_embeds, loss_cl, loss_lb, entity_embeds_all = prompt_encoder(
+            prompt_embeds, loss_cl = prompt_encoder(
                 entity_ids=batch["entity"],
                 token_embeds=token_embeds,
                 output_entity=True,
                 use_rec_prefix=True,
             )
             batch["context"]["prompt_embeds"] = prompt_embeds
-            batch["context"]["entity_embeds"] = entity_embeds_all
+            batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()
             loss = (
                 model(**batch["context"], rec=True).rec_loss
                 / args.gradient_accumulation_steps
             )
-            loss = loss + loss_cl * 0.01 + loss_lb * 0.01
+            loss = loss + loss_cl * 0.0001
             accelerator.backward(loss)
             train_loss.append(float(loss))
 
@@ -448,6 +480,14 @@ if __name__ == "__main__":
                 optimizer.zero_grad()
 
                 progress_bar.update(1)
+                progress_bar.set_postfix(
+                    {
+                        "rec": f"{float(loss):.4f}",
+                        # "bpr": f"{float(loss_bpr):.4f}",
+                        "cl": f"{float(loss_cl):.4f}",
+                        # "lb": f"{float(loss_lb):.4f}",
+                    }
+                )
                 completed_steps += 1
                 if run:
                     run.log(
@@ -466,17 +506,20 @@ if __name__ == "__main__":
         # valid
         valid_loss = []
         prompt_encoder.eval()
-        for batch in tqdm(valid_dataloader):
+        for name, module in prompt_encoder.named_modules():
+            if isinstance(module, nn.Dropout):
+                print(f"{name}: training={module.training}")  # phải là False
+        for i, batch in enumerate(tqdm(valid_dataloader)):
             with torch.no_grad():
                 token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-                prompt_embeds, loss_cl, loss_lb, entity_embeds_all = prompt_encoder(
+                prompt_embeds, loss_cl = prompt_encoder(
                     entity_ids=batch["entity"],
                     token_embeds=token_embeds,
                     output_entity=True,
                     use_rec_prefix=True,
                 )
                 batch["context"]["prompt_embeds"] = prompt_embeds
-                batch["context"]["entity_embeds"] = entity_embeds_all
+                batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()
 
                 outputs = model(**batch["context"], rec=True)
                 valid_loss.append(float(outputs.rec_loss))
@@ -488,6 +531,28 @@ if __name__ == "__main__":
                 ]
                 labels = batch["context"]["rec_labels"]
                 evaluator.evaluate(ranks, labels)
+            # Debug batch đầu tiên
+            if i == 0:
+                top_logit_indices = outputs.rec_logits[0].topk(10).indices
+                top_logit_values = outputs.rec_logits[0].topk(10).values
+                print(f"Top 10 logit indices: {top_logit_indices}")
+                print(f"Top 10 logit values:  {top_logit_values}")
+                print(f"Label index: {batch['context']['rec_labels'][0]}")
+                print(
+                    f"Label logit: {outputs.rec_logits[0][batch['context']['rec_labels'][0]]:.4f}"
+                )
+
+                # Kiểm tra entity_embeds scale
+                entity_embeds = batch["context"]["entity_embeds"]
+                print(
+                    f"entity_embeds norm mean: {entity_embeds.norm(dim=-1).mean():.4f}"
+                )
+                print(
+                    f"entity_embeds norm max:  {entity_embeds.norm(dim=-1).max():.4f}"
+                )
+
+                # Kiểm tra prompt_embeds scale
+                print(f"prompt_embeds shape: {batch['context']['prompt_embeds'].shape}")
 
         # metric
         report = accelerator.gather(evaluator.report())
@@ -516,14 +581,14 @@ if __name__ == "__main__":
         for batch in tqdm(test_dataloader):
             with torch.no_grad():
                 token_embeds = text_encoder(**batch["prompt"]).last_hidden_state
-                prompt_embeds, loss_cl, loss_lb, entity_embeds_all = prompt_encoder(
+                prompt_embeds, loss_cl = prompt_encoder(
                     entity_ids=batch["entity"],
                     token_embeds=token_embeds,
                     output_entity=True,
                     use_rec_prefix=True,
                 )
                 batch["context"]["prompt_embeds"] = prompt_embeds
-                batch["context"]["entity_embeds"] = entity_embeds_all
+                batch["context"]["entity_embeds"] = prompt_encoder.get_entity_embeds()
                 outputs = model(**batch["context"], rec=True)
                 test_loss.append(float(outputs.rec_loss))
                 logits = outputs.rec_logits[:, kg["item_ids"]]

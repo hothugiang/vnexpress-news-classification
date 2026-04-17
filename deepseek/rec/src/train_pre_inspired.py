@@ -253,7 +253,7 @@ if __name__ == "__main__":
     dialogue_items = extract_dialogue_items_from_dataset(
         dataset_dir=args.dataset_dir, dataset=args.dataset, split="train"
     )
-    pt_file = os.path.join(f"movielens_edges_{args.dataset}.pt")
+    pt_file = os.path.join(args.dataset_dir, f"movielens_edges_{args.dataset}.pt")
     ml_edges, n_ml_users, _, _ = load_movielens_from_pt(pt_file=pt_file)
     graph_info = UHCSGGraphBuilder(
         n_entity=kg["num_entities"],

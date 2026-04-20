@@ -24,7 +24,12 @@ from dataset_dbpedia_inspired import DBpedia, Co_occurrence, text_sim, image_sim
 from dataset_rec import CRSRecDataset, CRSRecDataCollator
 from evaluate_rec import RecEvaluator
 from model_gpt2 import PromptGPT2forCRS
-from model_prompt import DCMoMEPrompt
+from model_prompt import UHCSGPrompt
+from dataset_graph import (
+    UHCSGGraphBuilder,
+    extract_dialogue_items_from_dataset,
+    load_movielens_from_pt,
+)
 
 
 def parse_args():
@@ -145,6 +150,12 @@ def parse_args():
         action="store_true",
         help="log in all processes, otherwise only in rank0",
     )
+    parser.add_argument(
+        "--num_lightgcn_layers",
+        type=int,
+        default=4,
+        help="Number of layers in LightGCN.",
+    )
     args = parser.parse_args()
     return args
 
@@ -230,14 +241,14 @@ if __name__ == "__main__":
         entity_max_length=args.entity_max_length,
     )
     print(kg["num_entities"])
-    co = Co_occurrence(
-        dataset=args.dataset,
-        split="train",
-        debug=args.debug,
-        all_items=kg["item_ids"],
-        entity_max_length=args.entity_max_length,
-        n_entity=kg["num_entities"],
-    ).get_entity_co_info()
+    # co = Co_occurrence(
+    #     dataset=args.dataset,
+    #     split="train",
+    #     debug=args.debug,
+    #     all_items=kg["item_ids"],
+    #     entity_max_length=args.entity_max_length,
+    #     n_entity=kg["num_entities"],
+    # ).get_entity_co_info()
     text_simi = text_sim(
         dataset_dir=args.dataset_dir,
         dataset=args.dataset,
@@ -248,6 +259,23 @@ if __name__ == "__main__":
         dataset=args.dataset,
         pad_entity_id=kg["pad_entity_id"],
     ).get_entity_is_info()
+
+    dialogue_items = extract_dialogue_items_from_dataset(
+        dataset_dir=args.dataset_dir, dataset=args.dataset, split="train"
+    )
+    pt_file = os.path.join(
+        args.dataset_dir, args.dataset, f"movielens_edges_{args.dataset}.pt"
+    )
+    ml_edges, n_ml_users, _, _ = load_movielens_from_pt(pt_file=pt_file)
+    graph_info = UHCSGGraphBuilder(
+        n_entity=kg["num_entities"],
+        edge_index_t_s=text_simi["edge_index_t_s"],
+        edge_index_i_s=image_simi["edge_index_i_s"],
+        idx_to_id=text_simi["idx_to_id"],
+        dialogue_items=dialogue_items,
+        movielens_edges=ml_edges,
+        num_ml_users=n_ml_users,
+    ).get_graph_info()
     shot_len = int(len(train_dataset) * args.shot)
     train_dataset = random_split(
         train_dataset, [shot_len, len(train_dataset) - shot_len]
@@ -324,8 +352,8 @@ if __name__ == "__main__":
     print(f"Overlap: {len(train_items & valid_items)}")
     print(f"Valid items NOT in train: {len(valid_items - train_items)}")
     print(f"Test items NOT in train: {len(test_items - train_items)}")
-    exit(0)
-    prompt_encoder = DCMoMEPrompt(
+    # exit(0)
+    prompt_encoder = UHCSGPrompt(
         model.config.n_embd,
         text_encoder.config.hidden_size,
         model.config.n_head,
@@ -336,18 +364,20 @@ if __name__ == "__main__":
         num_bases=args.num_bases,
         edge_index=kg["edge_index"],
         edge_type=kg["edge_type"],
-        edge_index_c=co["edge_index_c"],
-        text_embeddings=text_simi["embeddings"],
-        image_embeddings=image_simi["embeddings"],
-        id_to_idx=text_simi["id_to_idx"],
-        movie_entity_ids=torch.tensor(text_simi["all_movie"], dtype=torch.long),
+        # edge_index_c=co["edge_index_c"],
+        unified_edge_index=graph_info["unified_edge_index"],
+        num_dialogues=graph_info["num_dialogues"],
+        num_ml_users=graph_info["num_ml_users"],
+        dialogue_item_map=graph_info["dialogue_item_map"],
+        movielens_edges=graph_info.get("movielens_edges"),
+        num_lightgcn_layers=args.num_lightgcn_layers,
         n_prefix_rec=args.n_prefix_rec,
     )
-    print("movie_entity_ids length :", len(kg["item_ids"]))
-    print("text_embeddings shape   :", text_simi["embeddings"].shape)
-    print("text all movie: ", len(text_simi["all_movie"]))
-    print("image_embeddings shape  :", image_simi["embeddings"].shape)
-    print("image all movie: ", len(image_simi["all_movie"]))
+    # print("movie_entity_ids length :", len(kg["item_ids"]))
+    # print("text_embeddings shape   :", text_simi["embeddings"].shape)
+    # print("text all movie: ", len(text_simi["all_movie"]))
+    # print("image_embeddings shape  :", image_simi["embeddings"].shape)
+    # print("image all movie: ", len(image_simi["all_movie"]))
 
     if args.prompt_encoder is not None:
         prompt_encoder.load(args.prompt_encoder)

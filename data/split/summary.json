@@ -1,0 +1,97 @@
+{
+  "seed": 42,
+  "source": "data_cleaned.csv",
+  "label_column": "main_category",
+  "split": {
+    "train": "data\\split\\train.csv",
+    "test": "data\\split\\test.csv",
+    "train_ratio": 0.8,
+    "test_ratio": 0.2
+  },
+  "categories": [
+    {
+      "category": "Sức khỏe",
+      "total": 17539,
+      "train": 14031,
+      "test": 3508
+    },
+    {
+      "category": "Kinh doanh",
+      "total": 8795,
+      "train": 7036,
+      "test": 1759
+    },
+    {
+      "category": "Thể thao",
+      "total": 7051,
+      "train": 5641,
+      "test": 1410
+    },
+    {
+      "category": "Giải trí",
+      "total": 6184,
+      "train": 4947,
+      "test": 1237
+    },
+    {
+      "category": "Xe",
+      "total": 4502,
+      "train": 3602,
+      "test": 900
+    },
+    {
+      "category": "Giáo dục",
+      "total": 4131,
+      "train": 3305,
+      "test": 826
+    },
+    {
+      "category": "Khoa học công nghệ",
+      "total": 4048,
+      "train": 3238,
+      "test": 810
+    },
+    {
+      "category": "Thời sự",
+      "total": 3532,
+      "train": 2826,
+      "test": 706
+    },
+    {
+      "category": "Du lịch",
+      "total": 3250,
+      "train": 2600,
+      "test": 650
+    },
+    {
+      "category": "Thế giới",
+      "total": 3241,
+      "train": 2593,
+      "test": 648
+    },
+    {
+      "category": "Bất động sản",
+      "total": 2575,
+      "train": 2060,
+      "test": 515
+    },
+    {
+      "category": "Đời sống",
+      "total": 2293,
+      "train": 1834,
+      "test": 459
+    },
+    {
+      "category": "Thư giãn",
+      "total": 2287,
+      "train": 1830,
+      "test": 457
+    },
+    {
+      "category": "Khác",
+      "total": 1991,
+      "train": 1593,
+      "test": 398
+    }
+  ]
+}

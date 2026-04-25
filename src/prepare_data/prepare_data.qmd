@@ -1,0 +1,57 @@
+# Prepare Data
+
+Tài liệu này mô tả ngắn gọn 2 script dùng để chuẩn bị dữ liệu cho bài toán `one-vs-other`.
+
+## `prepare_one_vs_other_data.py`
+
+File: `src/prepare_data/prepare_one_vs_other_data.py`
+
+Script này dùng để chia dữ liệu gốc thành train/test theo tỷ lệ từng category:
+
+- Đọc `data_cleaned.csv`
+- Chia stratified train/test với tỷ lệ mặc định `80/20` theo cột `main_category`
+- Lưu ra:
+
+```text
+data/split/train.csv
+data/split/test.csv
+data/split/summary.json
+```
+
+Command mẫu:
+
+```powershell
+python src\prepare_data\prepare_one_vs_other_data.py --input data_cleaned.csv --split-dir data\split --one-vs-other-dir data\one_vs_other --label-column main_category --test-size 0.2 --seed 42
+```
+
+## `create_one_vs_other_data.py`
+
+File: `src/prepare_data/create_one_vs_other_data.py`
+
+Script này dùng để tạo 14 bộ dữ liệu nhị phân từ train/test set:
+
+- Input thường là `data/split/train.csv`
+- Với mỗi category:
+- Positive = toàn bộ dòng thuộc category đó
+- Negative = lấy mẫu từ các category còn lại
+- Số lượng negative bằng số lượng positive
+- Negative được sample theo tỷ lệ phân bố gốc của các category còn lại
+- Lưu ra `data/one_vs_other/*.csv`hoặc 'test/*.csv'
+
+Mỗi file output có thêm:
+
+- `target_category`
+- `binary_label`
+
+Command mẫu:
+
+```powershell
+python src\prepare_data\create_one_vs_other_data.py --input data\split\train.csv --output-dir data\one_vs_other --label-column main_category --seed 42
+```
+
+## Ghi chú
+
+Thứ tự chạy thường dùng:
+
+1. Chạy `prepare_one_vs_other_data.py` để tạo `train.csv` và `test.csv`
+2. Nếu cần tạo lại riêng các bộ one-vs-other từ `train.csv`, chạy `create_one_vs_other_data.py`

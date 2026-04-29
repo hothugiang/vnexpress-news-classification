@@ -1,2 +1,12 @@
 .venv/
 .tmp/
+
+
+**/__pycache__/
+models/bert_one_vs_other/
+.omc/
+.python-version
+oldsesssion.txt
+pyproject.toml
+README.md
+uv.lock

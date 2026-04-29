@@ -158,9 +158,80 @@ data/reports/individual_binary_metrics.json
 data/reports/summary.json
 ```
 
+## Train BERT (PhoBERT) — One-vs-Other
+
+Thay thế TF-IDF + LR bằng BERT fine-tuning, giữ nguyên flow 14 binary classifiers.
+
+Yêu cầu thêm:
+
+```bash
+pip install torch transformers sentencepiece scikit-learn
+```
+
+Script:
+
+```text
+src/train_bert_one_vs_other.py
+```
+
+Command mẫu:
+
+```bash
+python src/train_bert_one_vs_other.py \
+    --input-dir data/one_vs_other \
+    --output-dir models/bert_one_vs_other \
+    --model-name vinai/phobert-base-v2 \
+    --epochs 3 \
+    --batch-size 32 \
+    --lr 2e-5 \
+    --max-len 128
+```
+
+Train một category cụ thể (để thử nghiệm nhanh):
+
+```bash
+python src/train_bert_one_vs_other.py --category thu_gian
+```
+
+Model được lưu theo cấu trúc:
+
+```text
+models/bert_one_vs_other/
+    <category>/          ← HuggingFace model dir (config, weights, tokenizer)
+        config.json
+        model.safetensors
+        tokenizer files
+        meta.json        ← target_category, best_val_f1, ...
+    summary.json
+```
+
+## Evaluate BERT
+
+```text
+src/evaluate_bert_one_vs_other.py
+```
+
+Command mẫu:
+
+```bash
+python src/evaluate_bert_one_vs_other.py \
+    --model-dir models/bert_one_vs_other \
+    --test-dir data/test \
+    --output-dir data/reports_bert
+```
+
+Output format giống hệt TF-IDF baseline để dễ so sánh:
+
+```text
+data/reports_bert/individual_binary_metrics.csv
+data/reports_bert/individual_binary_metrics.json
+data/reports_bert/summary.json
+```
+
 ## Ghi chú
 
 - `data/split/test.csv` là test set gốc sau khi chia 80/20.
 - `data/one_vs_other/*.csv` dùng để train 14 binary classifiers.
 - `data/test/*.csv` là test one-vs-other cho từng category, dùng để evaluate từng model.
 - `accuracy` có thể cao dù mô hình chưa tốt nếu dữ liệu mất cân bằng, nên xem thêm `precision`, `recall`, `f1`.
+- Model BERT gợi ý: `vinai/phobert-base-v2` (Vietnamese), `xlm-roberta-base` (multilingual mạnh hơn).

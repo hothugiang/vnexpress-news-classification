@@ -1,0 +1,15 @@
+{
+  "model_type": "bert",
+  "stage_2_method": "max_voting_threshold",
+  "model_dir": "D:\\University\\Master\\sem 2\\Khai phá\\models\\bert_one_vs_other",
+  "test_file": "D:\\University\\Master\\sem 2\\Khai phá\\data\\split\\test.csv",
+  "threshold": 0.5,
+  "other_label": "Khác",
+  "outputs": {
+    "metrics_json": "D:\\University\\Master\\sem 2\\Khai phá\\data\\final_reports\\bert_maxvoting\\metrics.json",
+    "classification_report_json": "D:\\University\\Master\\sem 2\\Khai phá\\data\\final_reports\\bert_maxvoting\\classification_report.json",
+    "classification_report_txt": "D:\\University\\Master\\sem 2\\Khai phá\\data\\final_reports\\bert_maxvoting\\classification_report.txt",
+    "confusion_matrix_csv": "D:\\University\\Master\\sem 2\\Khai phá\\data\\final_reports\\bert_maxvoting\\confusion_matrix.csv",
+    "predictions_csv": "D:\\University\\Master\\sem 2\\Khai phá\\data\\final_reports\\bert_maxvoting\\predictions.csv"
+  }
+}

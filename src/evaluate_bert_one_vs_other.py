@@ -94,7 +94,7 @@ def predict_binary(model_dir: Path, texts, batch_size, device, torch_mod, DataLo
     meta_path = model_dir / "meta.json"
     if not meta_path.exists():
         raise FileNotFoundError(f"Không tìm thấy meta.json trong {model_dir}")
-    with meta_path.open() as f:
+    with meta_path.open("r", encoding="utf-8") as f:
         meta = json.load(f)
 
     tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
@@ -169,7 +169,7 @@ def evaluate_all_models(model_dir: Path, test_dir: Path, output_dir: Path, batch
     metrics = []
 
     for mdir in model_dirs:
-        with (mdir / "meta.json").open() as f:
+        with (mdir / "meta.json").open("r", encoding="utf-8") as f:
             meta = json.load(f)
         target_category = meta["target_category"]
         stem = mdir.name

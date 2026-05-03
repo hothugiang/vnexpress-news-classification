@@ -1,0 +1,13 @@
+{
+  "model_dir": "models\\one_vs_other_tfidf_xgboost",
+  "test_dir": "data\\test",
+  "test_file": null,
+  "label_column": "main_category",
+  "model_count": 14,
+  "model_type": "TF-IDF + XGBoost",
+  "test_strategy": "per-category one-vs-other files: each model is evaluated on its matching test CSV using binary_label",
+  "outputs": {
+    "csv": "data\\reports_tfidf_xgboost\\individual_binary_metrics.csv",
+    "json": "data\\reports_tfidf_xgboost\\individual_binary_metrics.json"
+  }
+}

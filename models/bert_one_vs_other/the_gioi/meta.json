@@ -1,0 +1,9 @@
+{
+  "target_category": "Thế giới",
+  "model_name": "vinai/phobert-base-v2",
+  "max_len": 128,
+  "best_val_f1": 0.9566854990583804,
+  "positive": 2593,
+  "negative": 2593,
+  "total": 5186
+}

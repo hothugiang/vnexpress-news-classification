@@ -1,0 +1,9 @@
+{
+  "target_category": "Bất động sản",
+  "model_name": "vinai/phobert-base-v2",
+  "max_len": 128,
+  "best_val_f1": 0.9688249400479616,
+  "positive": 2060,
+  "negative": 2060,
+  "total": 4120
+}

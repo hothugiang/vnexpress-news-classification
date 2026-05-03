@@ -1,0 +1,19 @@
+{
+  "model_type": "tfidf_lr",
+  "stage_2_method": "max_voting_threshold",
+  "test_file": "D:\\University\\Master\\sem 2\\Khai phá\\data\\split\\test.csv",
+  "num_test_rows": 14283,
+  "threshold": 0.5,
+  "other_label": "Khác",
+  "threshold_fallback_count": 71,
+  "accuracy": 0.8638241265840509,
+  "micro_precision": 0.8638241265840509,
+  "micro_recall": 0.8638241265840509,
+  "micro_f1": 0.8638241265840509,
+  "macro_precision": 0.8131457939911167,
+  "macro_recall": 0.8230726526811736,
+  "macro_f1": 0.816985236759648,
+  "weighted_precision": 0.8702983734089828,
+  "weighted_recall": 0.8638241265840509,
+  "weighted_f1": 0.8663975301850704
+}

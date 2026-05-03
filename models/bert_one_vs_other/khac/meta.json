@@ -1,0 +1,9 @@
+{
+  "target_category": "Khác",
+  "model_name": "vinai/phobert-base-v2",
+  "max_len": 128,
+  "best_val_f1": 0.936046511627907,
+  "positive": 1593,
+  "negative": 1593,
+  "total": 3186
+}

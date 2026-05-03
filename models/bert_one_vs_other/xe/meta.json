@@ -1,0 +1,9 @@
+{
+  "target_category": "Xe",
+  "model_name": "vinai/phobert-base-v2",
+  "max_len": 128,
+  "best_val_f1": 0.9843081312410842,
+  "positive": 3602,
+  "negative": 3602,
+  "total": 7204
+}

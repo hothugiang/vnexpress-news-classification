@@ -1,0 +1,9 @@
+{
+  "target_category": "Thể thao",
+  "model_name": "vinai/phobert-base-v2",
+  "max_len": 128,
+  "best_val_f1": 0.9891696750902527,
+  "positive": 5641,
+  "negative": 5641,
+  "total": 11282
+}

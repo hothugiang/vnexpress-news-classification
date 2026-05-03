@@ -1,0 +1,20 @@
+{
+  "model_type": "tfidf_xgboost",
+  "stage_2_method": "stacking_logistic_regression_threshold_no_oof",
+  "note": "Stage 2 features are created directly from stage 1 models trained on the full train split; OOF stacking is not used.",
+  "model_dir": "D:\\University\\Master\\sem 2\\Khai phá\\models\\one_vs_other_tfidf_xgboost",
+  "train_file": "D:\\University\\Master\\sem 2\\Khai phá\\data\\split\\train.csv",
+  "test_file": "D:\\University\\Master\\sem 2\\Khai phá\\data\\split\\test.csv",
+  "threshold": 0.5,
+  "other_label": "Khác",
+  "stage2_model_path": "D:\\University\\Master\\sem 2\\Khai phá\\data\\final_reports\\tfidf_xgboost_stacking\\stage2_logistic_regression.joblib",
+  "outputs": {
+    "train_features_csv": "D:\\University\\Master\\sem 2\\Khai phá\\data\\final_reports\\tfidf_xgboost_stacking\\train_stage2_features.csv",
+    "test_features_csv": "D:\\University\\Master\\sem 2\\Khai phá\\data\\final_reports\\tfidf_xgboost_stacking\\test_stage2_features.csv",
+    "metrics_json": "D:\\University\\Master\\sem 2\\Khai phá\\data\\final_reports\\tfidf_xgboost_stacking\\metrics.json",
+    "classification_report_json": "D:\\University\\Master\\sem 2\\Khai phá\\data\\final_reports\\tfidf_xgboost_stacking\\classification_report.json",
+    "classification_report_txt": "D:\\University\\Master\\sem 2\\Khai phá\\data\\final_reports\\tfidf_xgboost_stacking\\classification_report.txt",
+    "confusion_matrix_csv": "D:\\University\\Master\\sem 2\\Khai phá\\data\\final_reports\\tfidf_xgboost_stacking\\confusion_matrix.csv",
+    "predictions_csv": "D:\\University\\Master\\sem 2\\Khai phá\\data\\final_reports\\tfidf_xgboost_stacking\\predictions.csv"
+  }
+}

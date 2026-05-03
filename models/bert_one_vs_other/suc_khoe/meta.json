@@ -1,0 +1,9 @@
+{
+  "target_category": "Sức khỏe",
+  "model_name": "vinai/phobert-base-v2",
+  "max_len": 128,
+  "best_val_f1": 0.9810239885427855,
+  "positive": 14031,
+  "negative": 14031,
+  "total": 28062
+}

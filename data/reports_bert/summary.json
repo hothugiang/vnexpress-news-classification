@@ -1,10 +1,10 @@
 {
-  "model_dir": "/home/longvh/projects/vnexpress-news-classification/models/bert_one_vs_other",
-  "test_dir": "/home/longvh/projects/vnexpress-news-classification/data/test",
+  "model_dir": "models\\bert_one_vs_other",
+  "test_dir": "data\\test",
   "model_type": "BERT binary one-vs-other",
   "model_count": 14,
   "outputs": {
-    "csv": "data/reports_bert/individual_binary_metrics.csv",
-    "json": "data/reports_bert/individual_binary_metrics.json"
+    "csv": "data\\reports_bert\\individual_binary_metrics.csv",
+    "json": "data\\reports_bert\\individual_binary_metrics.json"
   }
 }

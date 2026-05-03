@@ -1,0 +1,9 @@
+{
+  "target_category": "Du lịch",
+  "model_name": "vinai/phobert-base-v2",
+  "max_len": 128,
+  "best_val_f1": 0.9488752556237219,
+  "positive": 2600,
+  "negative": 2600,
+  "total": 5200
+}

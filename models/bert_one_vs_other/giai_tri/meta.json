@@ -1,0 +1,9 @@
+{
+  "target_category": "Giải trí",
+  "model_name": "vinai/phobert-base-v2",
+  "max_len": 128,
+  "best_val_f1": 0.9730807577268196,
+  "positive": 4947,
+  "negative": 4947,
+  "total": 9894
+}

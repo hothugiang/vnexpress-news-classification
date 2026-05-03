@@ -1,0 +1,9 @@
+{
+  "target_category": "Kinh doanh",
+  "model_name": "vinai/phobert-base-v2",
+  "max_len": 128,
+  "best_val_f1": 0.9555069292487236,
+  "positive": 7036,
+  "negative": 7036,
+  "total": 14072
+}

@@ -1,0 +1,220 @@
+# Giải thích thư mục `data/final_reports`
+
+Thư mục này lưu kết quả đánh giá **giai đoạn 2** của hệ thống phân loại cuối cùng.
+
+Trong project hiện tại, stage 2 có hai cơ chế:
+
+1. `max voting`
+2. `stacking`
+
+Mỗi cơ chế sẽ được chạy cho từng họ model ở stage 1:
+
+- `tfidf_lr`
+- `tfidf_xgboost`
+- `bert`
+
+## Cấu trúc thư mục
+
+Ví dụ các thư mục con có thể xuất hiện:
+
+```text
+data/final_reports/
+├── tfidf_lr_maxvoting/
+├── tfidf_xgboost_maxvoting/
+├── bert_maxvoting/
+├── tfidf_lr_stacking/
+├── tfidf_xgboost_stacking/
+└── bert_stacking/
+```
+
+Ý nghĩa tên thư mục:
+
+- `tfidf_lr_maxvoting`: stage 2 dùng max voting, đầu vào từ 14 model `TF-IDF + Logistic Regression`
+- `tfidf_xgboost_maxvoting`: stage 2 dùng max voting, đầu vào từ 14 model `TF-IDF + XGBoost`
+- `bert_maxvoting`: stage 2 dùng max voting, đầu vào từ 14 model BERT
+- `*_stacking`: stage 2 dùng `Logistic Regression` làm meta-classifier, đầu vào là 14 output của stage 1
+
+## Ý nghĩa stage 2
+
+### 1. Max voting
+
+Với mỗi bài báo:
+
+- chạy qua đủ 14 bộ phân loại nhị phân của stage 1
+- lấy 14 xác suất / score
+- chọn category có score cao nhất
+- nếu score cao nhất **không vượt threshold** thì gán về nhãn `Khác`
+
+### 2. Stacking
+
+Với mỗi bài báo:
+
+- chạy qua đủ 14 bộ phân loại nhị phân của stage 1
+- lấy 14 xác suất / score làm vector đặc trưng đầu vào
+- train một model `Logistic Regression` đa lớp trên `data/split/train.csv`
+- test trên `data/split/test.csv`
+- nếu xác suất cao nhất của stage 2 **không vượt threshold** thì gán về nhãn `Khác`
+
+## Các file trong mỗi thư mục report
+
+### File có ở cả `maxvoting` và `stacking`
+
+#### `metrics.json`
+
+File tổng hợp metric chính để so sánh mô hình.
+
+Thường gồm:
+
+- `accuracy`
+- `micro_precision`
+- `micro_recall`
+- `micro_f1`
+- `macro_precision`
+- `macro_recall`
+- `macro_f1`
+- `weighted_precision`
+- `weighted_recall`
+- `weighted_f1`
+- `threshold`
+- `other_label`
+- `threshold_fallback_count`
+
+Đây là file nên xem đầu tiên khi muốn so sánh kết quả giữa các mô hình.
+
+#### `classification_report.json`
+
+Report chi tiết theo từng category ở dạng JSON.
+
+Mỗi category sẽ có:
+
+- `precision`
+- `recall`
+- `f1-score`
+- `support`
+
+Ngoài ra còn có:
+
+- `accuracy`
+- `macro avg`
+- `weighted avg`
+
+Phù hợp khi cần đọc kết quả bằng code hoặc trích xuất tự động.
+
+#### `classification_report.txt`
+
+Nội dung tương tự `classification_report.json`, nhưng ở dạng text dễ đọc nhanh trong editor hoặc terminal.
+
+#### `confusion_matrix.csv`
+
+Ma trận nhầm lẫn của bộ phân loại cuối cùng.
+
+- hàng = nhãn thật
+- cột = nhãn dự đoán
+
+File này giúp trả lời:
+
+- class nào đang bị nhầm sang class nào
+- `Khác` có đang bị gán quá nhiều hay không
+
+#### `predictions.csv`
+
+Lưu dự đoán theo từng dòng dữ liệu test.
+
+Các cột quan trọng:
+
+- `true_category`: nhãn thật
+- `predicted_category`: nhãn dự đoán cuối
+- `predicted_score`: score cao nhất dùng để ra quyết định
+- `raw_best_category`: category có score cao nhất trước khi áp threshold
+- `threshold_applied`: `1` nếu bị đẩy về `Khác` do threshold, ngược lại là `0`
+
+Ngoài ra:
+
+- với `maxvoting`: có các cột `score_<category>`
+- với `stacking`: có các cột `proba_<category>`
+
+File này hữu ích khi cần phân tích từng case sai cụ thể.
+
+#### `summary.json`
+
+File mô tả metadata của lần chạy:
+
+- `model_type`
+- `stage_2_method`
+- `model_dir`
+- `train_file` / `test_file`
+- `threshold`
+- `other_label`
+- đường dẫn tới các file output khác
+
+Đây là file để kiểm tra nhanh:
+
+- bạn đã chạy bằng model nào
+- dùng cơ chế `maxvoting` hay `stacking`
+- threshold đang là bao nhiêu
+
+### File chỉ có ở `stacking`
+
+#### `stage2_logistic_regression.joblib`
+
+Model `Logistic Regression` đa lớp của stage 2 sau khi train xong.
+
+#### `train_stage2_features.csv`
+
+Feature của stage 2 được tạo từ `data/split/train.csv`.
+
+Mỗi dòng gồm:
+
+- `score_<category>`: 14 output từ stage 1
+- `main_category`: nhãn thật
+
+Đây chính là input train cho stage 2.
+
+#### `test_stage2_features.csv`
+
+Feature của stage 2 được tạo từ `data/split/test.csv`.
+
+Ý nghĩa tương tự `train_stage2_features.csv`, nhưng dùng để test.
+
+## Nên đọc file nào trước?
+
+Nếu chỉ muốn xem mô hình nào tốt hơn:
+
+1. `metrics.json`
+2. `classification_report.txt`
+3. `confusion_matrix.csv`
+
+Nếu muốn phân tích sâu lỗi dự đoán:
+
+1. `predictions.csv`
+2. `confusion_matrix.csv`
+3. `classification_report.json`
+
+## Gợi ý so sánh kết quả
+
+Khi so sánh các folder trong `final_reports`, nên đối chiếu ít nhất:
+
+- `micro_f1`
+- `macro_f1`
+- `weighted_f1`
+- `threshold_fallback_count`
+
+Ý nghĩa nhanh:
+
+- `micro_f1`: phản ánh hiệu quả tổng thể trên toàn bộ mẫu
+- `macro_f1`: cân bằng giữa các category, quan trọng khi dữ liệu lệch lớp
+- `weighted_f1`: có tính đến độ lớn của từng class
+- `threshold_fallback_count`: cho biết có bao nhiêu mẫu bị đẩy về `Khác`
+
+## Tóm tắt
+
+Thư mục `data/final_reports` là nơi lưu kết quả của **bộ phân loại cuối cùng ở stage 2**.
+
+- `*_maxvoting`: cơ chế chọn class có score cao nhất, có threshold fallback về `Khác`
+- `*_stacking`: cơ chế `Logistic Regression` dùng 14 output của stage 1 làm input, có threshold fallback về `Khác`
+
+Nếu cần một file duy nhất để đọc nhanh, hãy mở:
+
+```text
+metrics.json
+```

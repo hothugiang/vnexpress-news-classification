@@ -1,0 +1,129 @@
+{
+  "input_dir": "data\\one_vs_other",
+  "model_type": "TF-IDF + XGBoost",
+  "text_input": "title_clean/title + description",
+  "max_features_per_vectorizer": 100000,
+  "n_estimators": 300,
+  "max_depth": 6,
+  "learning_rate": 0.1,
+  "subsample": 0.8,
+  "colsample_bytree": 0.8,
+  "reg_lambda": 1.0,
+  "tree_method": "hist",
+  "n_jobs": -1,
+  "seed": 42,
+  "models": [
+    {
+      "file": "bat_dong_san.csv",
+      "model": "models\\one_vs_other_tfidf_xgboost\\bat_dong_san.joblib",
+      "target_category": "Bất động sản",
+      "positive": 2060,
+      "negative": 2060,
+      "total": 4120
+    },
+    {
+      "file": "doi_song.csv",
+      "model": "models\\one_vs_other_tfidf_xgboost\\doi_song.joblib",
+      "target_category": "Đời sống",
+      "positive": 1834,
+      "negative": 1834,
+      "total": 3668
+    },
+    {
+      "file": "du_lich.csv",
+      "model": "models\\one_vs_other_tfidf_xgboost\\du_lich.joblib",
+      "target_category": "Du lịch",
+      "positive": 2600,
+      "negative": 2600,
+      "total": 5200
+    },
+    {
+      "file": "giai_tri.csv",
+      "model": "models\\one_vs_other_tfidf_xgboost\\giai_tri.joblib",
+      "target_category": "Giải trí",
+      "positive": 4947,
+      "negative": 4947,
+      "total": 9894
+    },
+    {
+      "file": "giao_duc.csv",
+      "model": "models\\one_vs_other_tfidf_xgboost\\giao_duc.joblib",
+      "target_category": "Giáo dục",
+      "positive": 3305,
+      "negative": 3305,
+      "total": 6610
+    },
+    {
+      "file": "khac.csv",
+      "model": "models\\one_vs_other_tfidf_xgboost\\khac.joblib",
+      "target_category": "Khác",
+      "positive": 1593,
+      "negative": 1593,
+      "total": 3186
+    },
+    {
+      "file": "khoa_hoc_cong_nghe.csv",
+      "model": "models\\one_vs_other_tfidf_xgboost\\khoa_hoc_cong_nghe.joblib",
+      "target_category": "Khoa học công nghệ",
+      "positive": 3238,
+      "negative": 3238,
+      "total": 6476
+    },
+    {
+      "file": "kinh_doanh.csv",
+      "model": "models\\one_vs_other_tfidf_xgboost\\kinh_doanh.joblib",
+      "target_category": "Kinh doanh",
+      "positive": 7036,
+      "negative": 7036,
+      "total": 14072
+    },
+    {
+      "file": "suc_khoe.csv",
+      "model": "models\\one_vs_other_tfidf_xgboost\\suc_khoe.joblib",
+      "target_category": "Sức khỏe",
+      "positive": 14031,
+      "negative": 14031,
+      "total": 28062
+    },
+    {
+      "file": "the_gioi.csv",
+      "model": "models\\one_vs_other_tfidf_xgboost\\the_gioi.joblib",
+      "target_category": "Thế giới",
+      "positive": 2593,
+      "negative": 2593,
+      "total": 5186
+    },
+    {
+      "file": "the_thao.csv",
+      "model": "models\\one_vs_other_tfidf_xgboost\\the_thao.joblib",
+      "target_category": "Thể thao",
+      "positive": 5641,
+      "negative": 5641,
+      "total": 11282
+    },
+    {
+      "file": "thoi_su.csv",
+      "model": "models\\one_vs_other_tfidf_xgboost\\thoi_su.joblib",
+      "target_category": "Thời sự",
+      "positive": 2826,
+      "negative": 2826,
+      "total": 5652
+    },
+    {
+      "file": "thu_gian.csv",
+      "model": "models\\one_vs_other_tfidf_xgboost\\thu_gian.joblib",
+      "target_category": "Thư giãn",
+      "positive": 1830,
+      "negative": 1830,
+      "total": 3660
+    },
+    {
+      "file": "xe.csv",
+      "model": "models\\one_vs_other_tfidf_xgboost\\xe.joblib",
+      "target_category": "Xe",
+      "positive": 3602,
+      "negative": 3602,
+      "total": 7204
+    }
+  ]
+}

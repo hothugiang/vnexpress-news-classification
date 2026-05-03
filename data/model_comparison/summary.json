@@ -1,0 +1,44 @@
+{
+  "inputs": {
+    "tfidf_lr": "D:\\University\\Master\\sem 2\\Khai phá\\data\\reports_tfidf_lr\\individual_binary_metrics.csv",
+    "tfidf_xgboost": "D:\\University\\Master\\sem 2\\Khai phá\\data\\reports_tfidf_xgboost\\individual_binary_metrics.csv",
+    "bert": "D:\\University\\Master\\sem 2\\Khai phá\\data\\reports_bert\\individual_binary_metrics.csv"
+  },
+  "metric_columns": [
+    "accuracy",
+    "precision",
+    "recall",
+    "f1"
+  ],
+  "macro_summary": [
+    {
+      "model_name": "bert",
+      "num_categories": 14,
+      "macro_accuracy": 0.961351524839353,
+      "macro_precision": 0.9541227805404914,
+      "macro_recall": 0.9696773942347979,
+      "macro_f1": 0.9617422957933711
+    },
+    {
+      "model_name": "tfidf_lr",
+      "num_categories": 14,
+      "macro_accuracy": 0.9444501136817056,
+      "macro_precision": 0.9495993333785108,
+      "macro_recall": 0.9391625237359635,
+      "macro_f1": 0.9442905975274939
+    },
+    {
+      "model_name": "tfidf_xgboost",
+      "num_categories": 14,
+      "macro_accuracy": 0.9270435198584132,
+      "macro_precision": 0.9388861097341367,
+      "macro_recall": 0.913135827593315,
+      "macro_f1": 0.9257309200574743
+    }
+  ],
+  "best_model_by_macro_f1": "bert",
+  "outputs": {
+    "per_category_csv": "D:\\University\\Master\\sem 2\\Khai phá\\data\\model_comparison\\per_category_comparison.csv",
+    "macro_csv": "D:\\University\\Master\\sem 2\\Khai phá\\data\\model_comparison\\macro_summary.csv"
+  }
+}

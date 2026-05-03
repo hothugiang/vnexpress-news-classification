@@ -1,0 +1,9 @@
+{
+  "target_category": "Thời sự",
+  "model_name": "vinai/phobert-base-v2",
+  "max_len": 128,
+  "best_val_f1": 0.9425675675675675,
+  "positive": 2826,
+  "negative": 2826,
+  "total": 5652
+}

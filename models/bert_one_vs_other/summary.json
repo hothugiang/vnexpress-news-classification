@@ -1,0 +1,21 @@
+{
+  "model_name": "vinai/phobert-base-v2",
+  "model_type": "BERT binary one-vs-other",
+  "text_input": "title_clean/title + description",
+  "max_len": 128,
+  "epochs": 3,
+  "lr": 2e-05,
+  "batch_size": 32,
+  "seed": 42,
+  "models": [
+    {
+      "file": "xe.csv",
+      "model_dir": "models\\bert_one_vs_other\\xe",
+      "target_category": "Xe",
+      "positive": 3602,
+      "negative": 3602,
+      "total": 7204,
+      "best_val_f1": 0.9843081312410842
+    }
+  ]
+}

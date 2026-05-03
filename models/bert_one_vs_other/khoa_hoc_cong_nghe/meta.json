@@ -1,0 +1,9 @@
+{
+  "target_category": "Khoa học công nghệ",
+  "model_name": "vinai/phobert-base-v2",
+  "max_len": 128,
+  "best_val_f1": 0.9675425038639877,
+  "positive": 3238,
+  "negative": 3238,
+  "total": 6476
+}

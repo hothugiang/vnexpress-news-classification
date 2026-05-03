@@ -1,0 +1,9 @@
+{
+  "target_category": "Thư giãn",
+  "model_name": "vinai/phobert-base-v2",
+  "max_len": 128,
+  "best_val_f1": 0.9831460674157303,
+  "positive": 1830,
+  "negative": 1830,
+  "total": 3660
+}

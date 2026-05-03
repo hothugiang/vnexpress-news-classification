@@ -1,12 +1,13 @@
 .venv/
+.venv_gpu/
 .tmp/
 
 
 **/__pycache__/
-models/bert_one_vs_other/
+# models/bert_one_vs_other/
 .omc/
 .python-version
 oldsesssion.txt
 pyproject.toml
-README.md
+# README.md
 uv.lock

@@ -1,0 +1,9 @@
+{
+  "target_category": "Giáo dục",
+  "model_name": "vinai/phobert-base-v2",
+  "max_len": 128,
+  "best_val_f1": 0.9875,
+  "positive": 3305,
+  "negative": 3305,
+  "total": 6610
+}

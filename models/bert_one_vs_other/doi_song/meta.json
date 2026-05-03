@@ -1,0 +1,9 @@
+{
+  "target_category": "Đời sống",
+  "model_name": "vinai/phobert-base-v2",
+  "max_len": 128,
+  "best_val_f1": 0.8666666666666667,
+  "positive": 1834,
+  "negative": 1834,
+  "total": 3668
+}

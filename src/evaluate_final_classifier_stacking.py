@@ -30,6 +30,72 @@ def import_stage2_dependencies():
     return joblib, LogisticRegression
 
 
+def build_oof_stage1_pipeline(model_type: str, seed: int):
+    """Tạo pipeline stage 1 mới để train trong mỗi fold OOF."""
+    if model_type == "tfidf_lr":
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import FeatureUnion, Pipeline
+
+        features = FeatureUnion([
+            ("word_tfidf", TfidfVectorizer(analyzer="word", ngram_range=(1, 2), min_df=2, max_features=100000, sublinear_tf=True)),
+            ("char_tfidf", TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), min_df=2, max_features=100000, sublinear_tf=True)),
+        ])
+        return Pipeline([
+            ("features", features),
+            ("classifier", LogisticRegression(max_iter=1000, solver="liblinear", random_state=seed)),
+        ])
+
+    if model_type == "tfidf_xgboost":
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.pipeline import FeatureUnion, Pipeline
+        from xgboost import XGBClassifier
+
+        features = FeatureUnion([
+            ("word_tfidf", TfidfVectorizer(analyzer="word", ngram_range=(1, 2), min_df=2, max_features=100000, sublinear_tf=True)),
+            ("char_tfidf", TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), min_df=2, max_features=100000, sublinear_tf=True)),
+        ])
+        return Pipeline([
+            ("features", features),
+            ("classifier", XGBClassifier(
+                objective="binary:logistic", eval_metric="logloss",
+                n_estimators=300, max_depth=6, learning_rate=0.1,
+                subsample=0.8, colsample_bytree=0.8, reg_lambda=1.0,
+                random_state=seed, n_jobs=-1, tree_method="hist", verbosity=0,
+            )),
+        ])
+
+    raise ValueError(f"OOF không hỗ trợ model_type: {model_type}")
+
+
+def generate_oof_scores(model_type: str, texts, y_multiclass, categories, n_folds: int, seed: int):
+    """Sinh OOF predictions từ stage 1 để loại bỏ data leakage khi train stage 2.
+
+    Mỗi fold: train lại 14 binary pipelines trên K-1 fold, score fold còn lại.
+    Test set vẫn dùng final stage 1 models trained trên toàn bộ train data — không bị leak.
+    """
+    from sklearn.model_selection import StratifiedKFold
+
+    n = len(texts)
+    oof_scores = {cat: [0.0] * n for cat in categories}
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+
+    for fold_idx, (train_idx, val_idx) in enumerate(skf.split(texts, y_multiclass)):
+        print(f"  OOF fold {fold_idx + 1}/{n_folds}: train={len(train_idx)} val={len(val_idx)}")
+        train_texts_fold = [texts[i] for i in train_idx]
+        val_texts_fold = [texts[i] for i in val_idx]
+
+        for cat in categories:
+            y_binary = [1 if y_multiclass[i] == cat else 0 for i in train_idx]
+            pipeline = build_oof_stage1_pipeline(model_type, seed=seed)
+            pipeline.fit(train_texts_fold, y_binary)
+            probs = pipeline.predict_proba(val_texts_fold)
+            for j, global_idx in enumerate(val_idx):
+                oof_scores[cat][global_idx] = float(probs[j][1])
+
+    return oof_scores
+
+
 def get_stage1_scores(model_type: str, model_dir: Path, texts, bert_batch_size: int):
     """Sinh score 14 chiều từ 14 binary classifiers của stage 1."""
     if model_type in {"tfidf_lr", "tfidf_xgboost"}:
@@ -91,7 +157,15 @@ def evaluate_stacking(
     seed: int,
     threshold: float,
     other_label: str,
+    n_folds: int,
 ):
+    if model_type == "bert":
+        raise NotImplementedError(
+            "OOF stacking không hỗ trợ bert vì cần train lại n_folds × 14 BERT models "
+            "(quá tốn thời gian). Dùng --model-type tfidf_lr hoặc tfidf_xgboost, "
+            "hoặc dùng evaluate_final_classifier_argmax.py cho bert."
+        )
+
     train_rows = load_test_rows(train_file, label_column)
     test_rows = load_test_rows(test_file, label_column)
 
@@ -100,15 +174,25 @@ def evaluate_stacking(
     y_train = [(row.get(label_column) or "").strip() for row in train_rows]
     y_test = [(row.get(label_column) or "").strip() for row in test_rows]
 
-    print("Scoring stage 1 models on train split ...")
-    categories, train_scores = get_stage1_scores(
+    # Get categories from the final stage 1 models (used for test scoring too).
+    categories, _ = get_stage1_scores(
         model_type=model_type,
         model_dir=model_dir,
-        texts=train_texts,
+        texts=test_texts[:1],
         bert_batch_size=bert_batch_size,
     )
 
-    print("Scoring stage 1 models on test split ...")
+    print(f"Generating OOF stage 1 scores on train split ({n_folds} folds) ...")
+    train_scores = generate_oof_scores(
+        model_type=model_type,
+        texts=train_texts,
+        y_multiclass=y_train,
+        categories=categories,
+        n_folds=n_folds,
+        seed=seed,
+    )
+
+    print("Scoring final stage 1 models on test split ...")
     _, test_scores = get_stage1_scores(
         model_type=model_type,
         model_dir=model_dir,
@@ -214,7 +298,8 @@ def evaluate_stacking(
 
     metrics = {
         "model_type": model_type,
-        "stage_2_method": "stacking_logistic_regression_threshold_no_oof",
+        "stage_2_method": "stacking_logistic_regression_oof",
+        "oof_n_folds": n_folds,
         "train_file": str(train_file),
         "test_file": str(test_file),
         "num_train_rows": len(train_rows),
@@ -246,10 +331,11 @@ def evaluate_stacking(
         json.dump(
             {
                 "model_type": model_type,
-                "stage_2_method": "stacking_logistic_regression_threshold_no_oof",
+                "stage_2_method": "stacking_logistic_regression_oof",
+                "oof_n_folds": n_folds,
                 "note": (
-                    "Stage 2 features are created directly from stage 1 models "
-                    "trained on the full train split; OOF stacking is not used."
+                    f"Stage 2 features are OOF predictions from stage 1 ({n_folds} folds). "
+                    "Test features use final stage 1 models trained on full train split."
                 ),
                 "model_dir": str(model_dir),
                 "train_file": str(train_file),
@@ -347,6 +433,12 @@ def parse_args():
         default="Khác",
         help="Nhãn fallback khi không class nào vượt threshold.",
     )
+    parser.add_argument(
+        "--n-folds",
+        default=5,
+        type=int,
+        help="Số fold cho OOF stage 1 scoring khi train stage 2.",
+    )
     return parser.parse_args()
 
 
@@ -381,6 +473,7 @@ def main():
         seed=args.seed,
         threshold=args.threshold,
         other_label=args.other_label,
+        n_folds=args.n_folds,
     )
 
 

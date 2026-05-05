@@ -103,6 +103,7 @@ def build_model(args):
         random_state=args.seed,
         n_jobs=args.n_jobs,
         tree_method=args.tree_method,
+        device=args.device,
         verbosity=1,
     )
 
@@ -251,10 +252,15 @@ def parse_args():
         help="Tree method của XGBoost. Gợi ý: hist.",
     )
     parser.add_argument(
+        "--device",
+        default="cuda",
+        help="Device để train XGBoost: 'cuda' (GPU) hoặc 'cpu'.",
+    )
+    parser.add_argument(
         "--n-jobs",
         default=-1,
         type=int,
-        help="Số CPU cores dùng để train.",
+        help="Số CPU cores dùng để train (chỉ áp dụng khi device=cpu).",
     )
     parser.add_argument(
         "--seed",

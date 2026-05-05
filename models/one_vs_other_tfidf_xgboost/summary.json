@@ -1,5 +1,5 @@
 {
-  "input_dir": "data\\one_vs_other",
+  "input_dir": "data/one_vs_other",
   "model_type": "TF-IDF + XGBoost",
   "text_input": "title_clean/title + description",
   "max_features_per_vectorizer": 100000,
@@ -15,7 +15,7 @@
   "models": [
     {
       "file": "bat_dong_san.csv",
-      "model": "models\\one_vs_other_tfidf_xgboost\\bat_dong_san.joblib",
+      "model": "models/one_vs_other_tfidf_lr/bat_dong_san.joblib",
       "target_category": "Bất động sản",
       "positive": 2060,
       "negative": 2060,
@@ -23,7 +23,7 @@
     },
     {
       "file": "doi_song.csv",
-      "model": "models\\one_vs_other_tfidf_xgboost\\doi_song.joblib",
+      "model": "models/one_vs_other_tfidf_lr/doi_song.joblib",
       "target_category": "Đời sống",
       "positive": 1834,
       "negative": 1834,
@@ -31,7 +31,7 @@
     },
     {
       "file": "du_lich.csv",
-      "model": "models\\one_vs_other_tfidf_xgboost\\du_lich.joblib",
+      "model": "models/one_vs_other_tfidf_lr/du_lich.joblib",
       "target_category": "Du lịch",
       "positive": 2600,
       "negative": 2600,
@@ -39,7 +39,7 @@
     },
     {
       "file": "giai_tri.csv",
-      "model": "models\\one_vs_other_tfidf_xgboost\\giai_tri.joblib",
+      "model": "models/one_vs_other_tfidf_lr/giai_tri.joblib",
       "target_category": "Giải trí",
       "positive": 4947,
       "negative": 4947,
@@ -47,7 +47,7 @@
     },
     {
       "file": "giao_duc.csv",
-      "model": "models\\one_vs_other_tfidf_xgboost\\giao_duc.joblib",
+      "model": "models/one_vs_other_tfidf_lr/giao_duc.joblib",
       "target_category": "Giáo dục",
       "positive": 3305,
       "negative": 3305,
@@ -55,7 +55,7 @@
     },
     {
       "file": "khac.csv",
-      "model": "models\\one_vs_other_tfidf_xgboost\\khac.joblib",
+      "model": "models/one_vs_other_tfidf_lr/khac.joblib",
       "target_category": "Khác",
       "positive": 1593,
       "negative": 1593,
@@ -63,7 +63,7 @@
     },
     {
       "file": "khoa_hoc_cong_nghe.csv",
-      "model": "models\\one_vs_other_tfidf_xgboost\\khoa_hoc_cong_nghe.joblib",
+      "model": "models/one_vs_other_tfidf_lr/khoa_hoc_cong_nghe.joblib",
       "target_category": "Khoa học công nghệ",
       "positive": 3238,
       "negative": 3238,
@@ -71,7 +71,7 @@
     },
     {
       "file": "kinh_doanh.csv",
-      "model": "models\\one_vs_other_tfidf_xgboost\\kinh_doanh.joblib",
+      "model": "models/one_vs_other_tfidf_lr/kinh_doanh.joblib",
       "target_category": "Kinh doanh",
       "positive": 7036,
       "negative": 7036,
@@ -79,7 +79,7 @@
     },
     {
       "file": "suc_khoe.csv",
-      "model": "models\\one_vs_other_tfidf_xgboost\\suc_khoe.joblib",
+      "model": "models/one_vs_other_tfidf_lr/suc_khoe.joblib",
       "target_category": "Sức khỏe",
       "positive": 14031,
       "negative": 14031,
@@ -87,7 +87,7 @@
     },
     {
       "file": "the_gioi.csv",
-      "model": "models\\one_vs_other_tfidf_xgboost\\the_gioi.joblib",
+      "model": "models/one_vs_other_tfidf_lr/the_gioi.joblib",
       "target_category": "Thế giới",
       "positive": 2593,
       "negative": 2593,
@@ -95,7 +95,7 @@
     },
     {
       "file": "the_thao.csv",
-      "model": "models\\one_vs_other_tfidf_xgboost\\the_thao.joblib",
+      "model": "models/one_vs_other_tfidf_lr/the_thao.joblib",
       "target_category": "Thể thao",
       "positive": 5641,
       "negative": 5641,
@@ -103,7 +103,7 @@
     },
     {
       "file": "thoi_su.csv",
-      "model": "models\\one_vs_other_tfidf_xgboost\\thoi_su.joblib",
+      "model": "models/one_vs_other_tfidf_lr/thoi_su.joblib",
       "target_category": "Thời sự",
       "positive": 2826,
       "negative": 2826,
@@ -111,7 +111,7 @@
     },
     {
       "file": "thu_gian.csv",
-      "model": "models\\one_vs_other_tfidf_xgboost\\thu_gian.joblib",
+      "model": "models/one_vs_other_tfidf_lr/thu_gian.joblib",
       "target_category": "Thư giãn",
       "positive": 1830,
       "negative": 1830,
@@ -119,7 +119,7 @@
     },
     {
       "file": "xe.csv",
-      "model": "models\\one_vs_other_tfidf_xgboost\\xe.joblib",
+      "model": "models/one_vs_other_tfidf_lr/xe.joblib",
       "target_category": "Xe",
       "positive": 3602,
       "negative": 3602,

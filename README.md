@@ -74,7 +74,7 @@ Cài thư viện cơ bản:
 
 ```powershell
 python -m pip install --upgrade pip
-python -m pip install scikit-learn joblib xgboost
+python -m pip install scikit-learn joblib xgboost-gpu
 ```
 
 Nếu dùng BERT:

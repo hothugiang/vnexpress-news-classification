@@ -30,40 +30,31 @@ def import_stage2_dependencies():
     return joblib, LogisticRegression
 
 
-def build_oof_stage1_pipeline(model_type: str, seed: int):
-    """Tạo pipeline stage 1 mới để train trong mỗi fold OOF."""
-    if model_type == "tfidf_lr":
-        from sklearn.feature_extraction.text import TfidfVectorizer
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.pipeline import FeatureUnion, Pipeline
+def build_oof_tfidf_features():
+    """Tạo TF-IDF FeatureUnion dùng chung cho tất cả classifiers trong một fold."""
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.pipeline import FeatureUnion
 
-        features = FeatureUnion([
-            ("word_tfidf", TfidfVectorizer(analyzer="word", ngram_range=(1, 2), min_df=2, max_features=100000, sublinear_tf=True)),
-            ("char_tfidf", TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), min_df=2, max_features=100000, sublinear_tf=True)),
-        ])
-        return Pipeline([
-            ("features", features),
-            ("classifier", LogisticRegression(max_iter=1000, solver="liblinear", random_state=seed)),
-        ])
+    return FeatureUnion([
+        ("word_tfidf", TfidfVectorizer(analyzer="word", ngram_range=(1, 2), min_df=2, max_features=100000, sublinear_tf=True)),
+        ("char_tfidf", TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), min_df=2, max_features=100000, sublinear_tf=True)),
+    ])
+
+
+def build_oof_classifier(model_type: str, seed: int):
+    """Tạo classifier (không có TF-IDF) để train trên features đã được transform."""
+    if model_type == "tfidf_lr":
+        from sklearn.linear_model import LogisticRegression
+        return LogisticRegression(max_iter=1000, solver="liblinear", random_state=seed)
 
     if model_type == "tfidf_xgboost":
-        from sklearn.feature_extraction.text import TfidfVectorizer
-        from sklearn.pipeline import FeatureUnion, Pipeline
         from xgboost import XGBClassifier
-
-        features = FeatureUnion([
-            ("word_tfidf", TfidfVectorizer(analyzer="word", ngram_range=(1, 2), min_df=2, max_features=100000, sublinear_tf=True)),
-            ("char_tfidf", TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), min_df=2, max_features=100000, sublinear_tf=True)),
-        ])
-        return Pipeline([
-            ("features", features),
-            ("classifier", XGBClassifier(
-                objective="binary:logistic", eval_metric="logloss",
-                n_estimators=300, max_depth=6, learning_rate=0.1,
-                subsample=0.8, colsample_bytree=0.8, reg_lambda=1.0,
-                random_state=seed, n_jobs=-1, tree_method="hist", verbosity=0,
-            )),
-        ])
+        return XGBClassifier(
+            objective="binary:logistic", eval_metric="logloss",
+            n_estimators=300, max_depth=6, learning_rate=0.1,
+            subsample=0.8, colsample_bytree=0.8, reg_lambda=1.0,
+            random_state=seed, tree_method="hist", device="cuda", verbosity=0,
+        )
 
     raise ValueError(f"OOF không hỗ trợ model_type: {model_type}")
 
@@ -71,7 +62,7 @@ def build_oof_stage1_pipeline(model_type: str, seed: int):
 def generate_oof_scores(model_type: str, texts, y_multiclass, categories, n_folds: int, seed: int):
     """Sinh OOF predictions từ stage 1 để loại bỏ data leakage khi train stage 2.
 
-    Mỗi fold: train lại 14 binary pipelines trên K-1 fold, score fold còn lại.
+    Mỗi fold: fit TF-IDF 1 lần, rồi train 14 binary classifiers trên features chung.
     Test set vẫn dùng final stage 1 models trained trên toàn bộ train data — không bị leak.
     """
     from sklearn.model_selection import StratifiedKFold
@@ -85,11 +76,17 @@ def generate_oof_scores(model_type: str, texts, y_multiclass, categories, n_fold
         train_texts_fold = [texts[i] for i in train_idx]
         val_texts_fold = [texts[i] for i in val_idx]
 
-        for cat in categories:
+        # Fit TF-IDF 1 lần cho toàn fold — dùng chung cho 14 classifiers
+        tfidf = build_oof_tfidf_features()
+        X_train = tfidf.fit_transform(train_texts_fold)
+        X_val = tfidf.transform(val_texts_fold)
+
+        for cat_idx, cat in enumerate(categories):
+            print(f"    [{cat_idx + 1}/{len(categories)}] {cat}")
             y_binary = [1 if y_multiclass[i] == cat else 0 for i in train_idx]
-            pipeline = build_oof_stage1_pipeline(model_type, seed=seed)
-            pipeline.fit(train_texts_fold, y_binary)
-            probs = pipeline.predict_proba(val_texts_fold)
+            clf = build_oof_classifier(model_type, seed=seed)
+            clf.fit(X_train, y_binary)
+            probs = clf.predict_proba(X_val)
             for j, global_idx in enumerate(val_idx):
                 oof_scores[cat][global_idx] = float(probs[j][1])
 
@@ -424,9 +421,10 @@ def parse_args():
     )
     parser.add_argument(
         "--threshold",
-        default=0.5,
+        default=0.15,
         type=float,
-        help="Nếu xác suất cao nhất của stage 2 < threshold thì gán về nhãn Khác.",
+        help="Nếu xác suất cao nhất của stage 2 < threshold thì gán về nhãn Khác. "
+             "Với 14 classes, max prob thường 0.2-0.5 nên 0.15 là ngưỡng phù hợp (≈ 2× random chance).",
     )
     parser.add_argument(
         "--other-label",

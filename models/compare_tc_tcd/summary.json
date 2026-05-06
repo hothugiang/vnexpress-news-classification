@@ -1,0 +1,236 @@
+{
+  "input_dir": "data\\one_vs_other",
+  "model_type": "TF-IDF + Logistic Regression",
+  "variants": {
+    "tc": "title + content",
+    "tcd": "title + content + description"
+  },
+  "total_models": 28,
+  "total_train_time_sec": 1330.19,
+  "models": [
+    {
+      "file": "bat_dong_san.csv",
+      "model": "models\\compare_tc_tcd\\bat_dong_san_tc.joblib",
+      "target_category": "Bất động sản",
+      "variant": "tc",
+      "train_time_sec": 20.7135,
+      "samples": 4120
+    },
+    {
+      "file": "bat_dong_san.csv",
+      "model": "models\\compare_tc_tcd\\bat_dong_san_tcd.joblib",
+      "target_category": "Bất động sản",
+      "variant": "tcd",
+      "train_time_sec": 20.5703,
+      "samples": 4120
+    },
+    {
+      "file": "doi_song.csv",
+      "model": "models\\compare_tc_tcd\\doi_song_tc.joblib",
+      "target_category": "Đời sống",
+      "variant": "tc",
+      "train_time_sec": 19.2858,
+      "samples": 3668
+    },
+    {
+      "file": "doi_song.csv",
+      "model": "models\\compare_tc_tcd\\doi_song_tcd.joblib",
+      "target_category": "Đời sống",
+      "variant": "tcd",
+      "train_time_sec": 22.9015,
+      "samples": 3668
+    },
+    {
+      "file": "du_lich.csv",
+      "model": "models\\compare_tc_tcd\\du_lich_tc.joblib",
+      "target_category": "Du lịch",
+      "variant": "tc",
+      "train_time_sec": 30.5444,
+      "samples": 5200
+    },
+    {
+      "file": "du_lich.csv",
+      "model": "models\\compare_tc_tcd\\du_lich_tcd.joblib",
+      "target_category": "Du lịch",
+      "variant": "tcd",
+      "train_time_sec": 30.229,
+      "samples": 5200
+    },
+    {
+      "file": "giai_tri.csv",
+      "model": "models\\compare_tc_tcd\\giai_tri_tc.joblib",
+      "target_category": "Giải trí",
+      "variant": "tc",
+      "train_time_sec": 50.1696,
+      "samples": 9894
+    },
+    {
+      "file": "giai_tri.csv",
+      "model": "models\\compare_tc_tcd\\giai_tri_tcd.joblib",
+      "target_category": "Giải trí",
+      "variant": "tcd",
+      "train_time_sec": 53.7839,
+      "samples": 9894
+    },
+    {
+      "file": "giao_duc.csv",
+      "model": "models\\compare_tc_tcd\\giao_duc_tc.joblib",
+      "target_category": "Giáo dục",
+      "variant": "tc",
+      "train_time_sec": 33.0766,
+      "samples": 6610
+    },
+    {
+      "file": "giao_duc.csv",
+      "model": "models\\compare_tc_tcd\\giao_duc_tcd.joblib",
+      "target_category": "Giáo dục",
+      "variant": "tcd",
+      "train_time_sec": 33.358,
+      "samples": 6610
+    },
+    {
+      "file": "khac.csv",
+      "model": "models\\compare_tc_tcd\\khac_tc.joblib",
+      "target_category": "Khác",
+      "variant": "tc",
+      "train_time_sec": 18.5773,
+      "samples": 3186
+    },
+    {
+      "file": "khac.csv",
+      "model": "models\\compare_tc_tcd\\khac_tcd.joblib",
+      "target_category": "Khác",
+      "variant": "tcd",
+      "train_time_sec": 19.1044,
+      "samples": 3186
+    },
+    {
+      "file": "khoa_hoc_cong_nghe.csv",
+      "model": "models\\compare_tc_tcd\\khoa_hoc_cong_nghe_tc.joblib",
+      "target_category": "Khoa học công nghệ",
+      "variant": "tc",
+      "train_time_sec": 31.7488,
+      "samples": 6476
+    },
+    {
+      "file": "khoa_hoc_cong_nghe.csv",
+      "model": "models\\compare_tc_tcd\\khoa_hoc_cong_nghe_tcd.joblib",
+      "target_category": "Khoa học công nghệ",
+      "variant": "tcd",
+      "train_time_sec": 33.5553,
+      "samples": 6476
+    },
+    {
+      "file": "kinh_doanh.csv",
+      "model": "models\\compare_tc_tcd\\kinh_doanh_tc.joblib",
+      "target_category": "Kinh doanh",
+      "variant": "tc",
+      "train_time_sec": 75.9522,
+      "samples": 14072
+    },
+    {
+      "file": "kinh_doanh.csv",
+      "model": "models\\compare_tc_tcd\\kinh_doanh_tcd.joblib",
+      "target_category": "Kinh doanh",
+      "variant": "tcd",
+      "train_time_sec": 84.4957,
+      "samples": 14072
+    },
+    {
+      "file": "suc_khoe.csv",
+      "model": "models\\compare_tc_tcd\\suc_khoe_tc.joblib",
+      "target_category": "Sức khỏe",
+      "variant": "tc",
+      "train_time_sec": 160.9755,
+      "samples": 28062
+    },
+    {
+      "file": "suc_khoe.csv",
+      "model": "models\\compare_tc_tcd\\suc_khoe_tcd.joblib",
+      "target_category": "Sức khỏe",
+      "variant": "tcd",
+      "train_time_sec": 151.2749,
+      "samples": 28062
+    },
+    {
+      "file": "the_gioi.csv",
+      "model": "models\\compare_tc_tcd\\the_gioi_tc.joblib",
+      "target_category": "Thế giới",
+      "variant": "tc",
+      "train_time_sec": 30.0411,
+      "samples": 5186
+    },
+    {
+      "file": "the_gioi.csv",
+      "model": "models\\compare_tc_tcd\\the_gioi_tcd.joblib",
+      "target_category": "Thế giới",
+      "variant": "tcd",
+      "train_time_sec": 31.4432,
+      "samples": 5186
+    },
+    {
+      "file": "the_thao.csv",
+      "model": "models\\compare_tc_tcd\\the_thao_tc.joblib",
+      "target_category": "Thể thao",
+      "variant": "tc",
+      "train_time_sec": 54.7708,
+      "samples": 11282
+    },
+    {
+      "file": "the_thao.csv",
+      "model": "models\\compare_tc_tcd\\the_thao_tcd.joblib",
+      "target_category": "Thể thao",
+      "variant": "tcd",
+      "train_time_sec": 60.5445,
+      "samples": 11282
+    },
+    {
+      "file": "thoi_su.csv",
+      "model": "models\\compare_tc_tcd\\thoi_su_tc.joblib",
+      "target_category": "Thời sự",
+      "variant": "tc",
+      "train_time_sec": 31.0146,
+      "samples": 5652
+    },
+    {
+      "file": "thoi_su.csv",
+      "model": "models\\compare_tc_tcd\\thoi_su_tcd.joblib",
+      "target_category": "Thời sự",
+      "variant": "tcd",
+      "train_time_sec": 28.4646,
+      "samples": 5652
+    },
+    {
+      "file": "thu_gian.csv",
+      "model": "models\\compare_tc_tcd\\thu_gian_tc.joblib",
+      "target_category": "Thư giãn",
+      "variant": "tc",
+      "train_time_sec": 14.0709,
+      "samples": 3660
+    },
+    {
+      "file": "thu_gian.csv",
+      "model": "models\\compare_tc_tcd\\thu_gian_tcd.joblib",
+      "target_category": "Thư giãn",
+      "variant": "tcd",
+      "train_time_sec": 13.3742,
+      "samples": 3660
+    },
+    {
+      "file": "xe.csv",
+      "model": "models\\compare_tc_tcd\\xe_tc.joblib",
+      "target_category": "Xe",
+      "variant": "tc",
+      "train_time_sec": 35.6735,
+      "samples": 7204
+    },
+    {
+      "file": "xe.csv",
+      "model": "models\\compare_tc_tcd\\xe_tcd.joblib",
+      "target_category": "Xe",
+      "variant": "tcd",
+      "train_time_sec": 33.9892,
+      "samples": 7204
+    }
+  ]
+}

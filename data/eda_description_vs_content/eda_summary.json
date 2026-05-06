@@ -1,0 +1,118 @@
+{
+  "data_profile": {
+    "input_file": "data_cleaned.csv",
+    "initial_rows": 71419,
+    "rows_after_drop_empty_required_fields": 71419,
+    "dropped_rows": 0,
+    "description_column": "description",
+    "content_column": "content",
+    "label_column": "main_category"
+  },
+  "word_count_aggregate": {
+    "description_mean_words": 29.09304246769067,
+    "description_median_words": 29.0,
+    "content_mean_words": 579.7628782256822,
+    "content_median_words": 523.0,
+    "mean_description_words_div_mean_content_words": 0.05018093355119181,
+    "median_description_words_div_median_content_words": 0.055449330783938815,
+    "row_ratio_median": 0.05476190476190476,
+    "row_ratio_p90": 0.13596491228070176,
+    "rows_content_shorter_than_description": 2727,
+    "rows_content_under_50_words": 3189,
+    "rows_content_under_100_words": 4221
+  },
+  "similarity_summary": {
+    "sample_rows": 30000,
+    "tfidf_features": 80000,
+    "tfidf_cosine_same_row": {
+      "count": 30000,
+      "mean": 0.21665812870349588,
+      "std": 0.08709794093894838,
+      "min": 0.0,
+      "p01": 0.0,
+      "p05": 0.06083559113329461,
+      "p25": 0.16551552777923842,
+      "p50_median": 0.2183679999088846,
+      "p75": 0.2720839051556082,
+      "p90": 0.32315882760414505,
+      "p95": 0.35528591974940876,
+      "p99": 0.41988124906721225,
+      "max": 0.7712489136994252
+    },
+    "tfidf_cosine_shuffled_content": {
+      "count": 30000,
+      "mean": 0.019117357717972305,
+      "std": 0.013775515510970063,
+      "min": 0.0,
+      "p01": 0.0,
+      "p05": 0.0025073978969584903,
+      "p25": 0.01059482039614089,
+      "p50_median": 0.01661995502965719,
+      "p75": 0.024431358913429863,
+      "p90": 0.034548852210644826,
+      "p95": 0.043047291680053085,
+      "p99": 0.06860105939125756,
+      "max": 0.2654392701744034
+    },
+    "tfidf_cosine_mean_lift_vs_shuffled": 11.333058255211425,
+    "token_jaccard": {
+      "count": 30000,
+      "mean": 0.08440782160050184,
+      "std": 0.036879371468920466,
+      "min": 0.0,
+      "p01": 0.0,
+      "p05": 0.035352643038155405,
+      "p25": 0.06333333333333334,
+      "p50_median": 0.08108108108108109,
+      "p75": 0.10126582278481013,
+      "p90": 0.1257522690468121,
+      "p95": 0.14583333333333334,
+      "p99": 0.20354146181579785,
+      "max": 0.5853658536585366
+    },
+    "description_token_coverage_in_content": {
+      "count": 30000,
+      "mean": 0.7743890017496017,
+      "std": 0.220037605155134,
+      "min": 0.0,
+      "p01": 0.0,
+      "p05": 0.2692307692307692,
+      "p25": 0.7096774193548387,
+      "p50_median": 0.8333333333333334,
+      "p75": 0.92,
+      "p90": 0.9666666666666667,
+      "p95": 1.0,
+      "p99": 1.0,
+      "max": 1.0
+    },
+    "content_token_coverage_in_description": {
+      "count": 30000,
+      "mean": 0.0888180398335627,
+      "std": 0.05250973468299739,
+      "min": 0.0,
+      "p01": 0.0,
+      "p05": 0.0372197577251576,
+      "p25": 0.0648854961832061,
+      "p50_median": 0.08333333333333333,
+      "p75": 0.10416666666666667,
+      "p90": 0.13138686131386862,
+      "p95": 0.15527950310559005,
+      "p99": 0.24,
+      "max": 1.0
+    }
+  },
+  "model_comparison": null,
+  "conclusion": {
+    "verdict": "not_evaluated",
+    "message": "Chưa chạy classifier vì dùng --skip-model."
+  },
+  "plots": [
+    "data\\eda_description_vs_content\\word_count_distribution.png",
+    "data\\eda_description_vs_content\\similarity_same_vs_shuffled.png",
+    "data\\eda_description_vs_content\\similarity_mean_same_vs_shuffled.png",
+    "data\\eda_description_vs_content\\similarity_key_metrics_bar.png",
+    "data\\eda_description_vs_content\\description_token_coverage_distribution.png",
+    "data\\eda_description_vs_content\\similarity_by_category.png",
+    "data\\eda_description_vs_content\\description_token_coverage_by_category.png"
+  ]
+}

@@ -280,7 +280,7 @@ class DCMoMEPrompt(nn.Module):
             attn_weights = self.cross_attn(token_embeds) @ entity_embeds.permute(
                 0, 2, 1
             )
-            attn_weights /= self.hidden_size
+            attn_weights /= math.sqrt(self.hidden_size)
 
             if output_entity:
                 token_weights = F.softmax(attn_weights, dim=1).permute(0, 2, 1)

@@ -1,4 +1,5 @@
 import argparse
+import json
 import math
 import os
 import sys
@@ -414,7 +415,7 @@ if __name__ == "__main__":
                 model(**batch["context"], rec=True).rec_loss
                 / args.gradient_accumulation_steps
             )
-            loss = loss + loss_cl * 0.01 + loss_lb * 0.01
+            loss = loss + loss_cl * 0.0001 + loss_lb * 0.001
             accelerator.backward(loss)
             train_loss.append(float(loss))
 
@@ -484,10 +485,12 @@ if __name__ == "__main__":
             run.log(valid_report)
         evaluator.reset_metric()
 
+        new_best = False
         if valid_report[f"valid/{metric}"] * mode > best_metric * mode:
             prompt_encoder.save(best_metric_dir)
             best_metric = valid_report[f"valid/{metric}"]
             logger.info(f"new best model with {metric}")
+            new_best = True
 
         # test
         test_loss = []
@@ -524,6 +527,9 @@ if __name__ == "__main__":
         logger.info(f"{test_report}")
         if run:
             run.log(test_report)
+        if new_best and accelerator.is_local_main_process:
+            with open(os.path.join(args.output_dir, "best_metrics.json"), "w") as f:
+                json.dump({"seed": args.seed, **test_report}, f, indent=2)
         evaluator.reset_metric()
 
     final_dir = os.path.join(args.output_dir, "final")

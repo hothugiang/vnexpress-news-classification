@@ -1,8 +1,8 @@
 #!/bin/bash
-# Compare MSCRS vs DCMoME finetune rec on INSPIRED across 3 seeds.
+# Compare MSCRS vs DCMoME finetune rec on INSPIRED across seeds and LRs.
 # Requires pretrained models in output/compare/ (run compare_pretrain.sh first).
-# Usage: bash scripts/compare_rec.sh [SEEDS...]
-# Example: bash scripts/compare_rec.sh 1 2 3
+# Usage: bash scripts/compare_rec.sh [--lr LR1,LR2,...] [--seed SEED1,SEED2,...]
+# Example: bash scripts/compare_rec.sh --lr 1e-5,5e-6 --seed 1,2,3
 
 set -e
 cd "$(dirname "$0")/.."
@@ -20,10 +20,25 @@ GRAD_ACCUM=8
 SEEDS=("${@:-1 2 3}")
 if [ $# -eq 0 ]; then
     SEEDS=(1 2 3)
-fi
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --lr)
+            IFS=',' read -ra LRS <<< "$2"
+            shift 2
+            ;;
+        --seed)
+            IFS=',' read -ra SEEDS <<< "$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2; exit 1
+            ;;
+    esac
+done
 
 mkdir -p "$OUTPUT_BASE"
 
+for LR in "${LRS[@]}"; do
 for SEED in "${SEEDS[@]}"; do
     # echo "============================================"
     # echo "MSCRS finetune rec  seed=$SEED  lr=$LR  epochs=$EPOCHS"
@@ -71,6 +86,7 @@ for SEED in "${SEEDS[@]}"; do
       --output_dir $OUTPUT_BASE/dcmome-rec-LR${LR}-seed${SEED}
 
     echo ""
+done
 done
 
 echo "============================================"
